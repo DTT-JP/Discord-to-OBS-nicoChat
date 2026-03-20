@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Discord OBS Overlay</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: "Hiragino Kaku Gothic ProN", "Meiryo", "Yu Gothic", sans-serif;
+    }
+
+    #stage {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    /* ── 認証画面 ── */
+    #auth-screen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.82);
+      color: #fff;
+      z-index: 9999;
+      gap: 16px;
+    }
+    #auth-screen h1     { font-size: 1.4rem; letter-spacing: 0.05em; }
+    #auth-code-display  {
+      font-size: 3.5rem; font-weight: 700; letter-spacing: 0.3em;
+      color: #57f287; font-variant-numeric: tabular-nums;
+      text-shadow: 0 0 20px rgba(87, 242, 135, 0.6);
+    }
+    #auth-screen p      { font-size: 0.9rem; color: #aaa; text-align: center; line-height: 1.6; }
+    #auth-screen .error { color: #ed4245; font-size: 1rem; }
+
+    /* ── 共通テキストスタイル ── */
+    .text-part      { font-size: 6vh !important; color: #ffffff; font-weight: 500; }
+    .text-part.h-h1 { font-size: 12vh   !important; }
+    .text-part.h-h2 { font-size: 9vh    !important; }
+    .text-part.h-h3 { font-size: 7.02vh !important; }
+    .text-part.h-hs { font-size: 3vh    !important; }
+
+    /* ── 流れるコメント ── */
+    .comment {
+      position: absolute;
+      left: 100vw;
+      /*
+       * 改行対応: white-space を pre に変更
+       * pre = 空白・改行を保持しつつ自動折り返しなし
+       * → AA や複数行テキストがそのまま表示される
+       */
+      white-space: pre;
+      pointer-events: none;
+      display: inline-flex;
+      flex-direction: column;   /* 改行時に縦並び */
+      align-items: flex-start;
+      gap: 0;
+      line-height: 1.4;
+      text-shadow:
+        -1px -1px 0 rgba(0,0,0,0.9),  1px -1px 0 rgba(0,0,0,0.9),
+        -1px  1px 0 rgba(0,0,0,0.9),   1px  1px 0 rgba(0,0,0,0.9),
+         0    2px 6px rgba(0,0,0,0.7);
+      animation: flow var(--duration, 8s) linear forwards;
+      will-change: transform;
+    }
+
+    /* ── 固定コメント（上下） ── */
+    .comment-fixed {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      /*
+       * 改行対応: pre を使用
+       * 固定表示なので折り返しも保持
+       */
+      white-space: pre;
+      pointer-events: none;
+      display: inline-flex;
+      flex-direction: column;   /* 複数行を縦に積む */
+      align-items: center;
+      gap: 0;
+      line-height: 1.4;
+      text-align: center;
+      text-shadow:
+        -1px -1px 0 rgba(0,0,0,0.9),  1px -1px 0 rgba(0,0,0,0.9),
+        -1px  1px 0 rgba(0,0,0,0.9),   1px  1px 0 rgba(0,0,0,0.9),
+         0    2px 6px rgba(0,0,0,0.7);
+    }
+    /* フェードアウトクラスは削除 → 即消えに変更 */
+
+    /* ── 絵文字・スタンプ ── */
+    .emoji   { height: 1.2em; width: auto; vertical-align: middle; display: inline-block; }
+    .sticker { height: 12vh;  width: auto; vertical-align: middle; display: inline-block; }
+
+    @keyframes flow {
+      from { transform: translateX(0); }
+      to   { transform: translateX(calc(-1 * var(--distance, 200vw))); }
+    }
+  </style>
+</head>
+<body>
+  <div id="auth-screen">
+    <h1>🔐 認証コード</h1>
+    <div id="auth-code-display">------</div>
+    <p>
+      Discordで以下のコマンドを実行してください<br />
+      <strong>/auth [上記の6桁コード]</strong>
+    </p>
+  </div>
+  <div id="stage"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/script.js"></script>
+</body>
+</html>
