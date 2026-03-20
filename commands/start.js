@@ -21,9 +21,9 @@ export const data = new SlashCommandBuilder()
   .addIntegerOption((opt) =>
     opt
       .setName("limit")
-      .setDescription(`同時表示コメント上限（未指定時: ${MAX_COMMENTS}）`)
+      .setDescription(`同時表示コメント上限（未指定時: ${MAX_COMMENTS}）最大10000`)
       .setMinValue(1)
-      .setMaxValue(200)
+      .setMaxValue(10000)
       .setRequired(false),
   );
 

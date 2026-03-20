@@ -7,9 +7,9 @@ export const data = new SlashCommandBuilder()
   .addIntegerOption((opt) =>
     opt
       .setName("limit")
-      .setDescription("新しい同時表示コメント上限数（1〜200）")
+      .setDescription("新しい同時表示コメント上限数（1〜10000）")
       .setMinValue(1)
-      .setMaxValue(200)
+      .setMaxValue(10000)
       .setRequired(true),
   );
 
