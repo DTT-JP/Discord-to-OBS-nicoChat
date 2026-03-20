@@ -1,7 +1,10 @@
 (() => {
   "use strict";
 
-  const MAX_FLOW_COMMENTS = 30;
+  // MAX_FLOW_COMMENTS はサーバーから受け取るまでのデフォルト値
+  // auth_success で上書きされる
+  let MAX_FLOW_COMMENTS = 30;
+
   const FIXED_DISPLAY_MS  = 8000;
   const FIXED_MAX_ROWS    = 5;
   const ROW_HEIGHT_VH     = 8;
@@ -62,24 +65,39 @@
   }
 
   // ── Socket イベント ──────────────────────────────
+
   socket.on("connect", () => {
-    console.log("[overlay] 接続 id=", socket.id);
+    console.log("[overlay] 接続確立 id=", socket.id);
     socket.emit("client_ready");
   });
 
+  if (socket.connected) {
+    console.log("[overlay] 既接続 → client_ready 即時送信");
+    socket.emit("client_ready");
+  }
+
   socket.on("auth_code", ({ code }) => {
-    console.log("[overlay] 認証コード:", code);
-    authCodeDisplay.textContent = code;
+    console.log("[overlay] 認証コード受信:", code);
+    authCodeDisplay.textContent = String(code);
   });
 
-  socket.on("auth_success", async ({ key }) => {
+  // 認証成功：AES鍵と同時表示上限を受け取る
+  socket.on("auth_success", async ({ key, maxComments }) => {
     try {
-      aesKey = await importKey(key);
+      aesKey            = await importKey(key);
+      MAX_FLOW_COMMENTS = maxComments;
       authScreen.style.display = "none";
-      console.log("[overlay] 認証完了");
+      console.log(`[overlay] 認証完了 maxComments=${maxComments}`);
     } catch (e) {
+      console.error("[overlay] 鍵エラー:", e);
       showAuthError("鍵の設定に失敗しました");
     }
+  });
+
+  // 上限のリアルタイム更新
+  socket.on("update_limit", ({ maxComments }) => {
+    MAX_FLOW_COMMENTS = maxComments;
+    console.log(`[overlay] 表示上限を更新: ${maxComments}`);
   });
 
   socket.on("message", async (enc) => {
@@ -88,17 +106,19 @@
       const p = await decryptPayload(enc, aesKey);
       const text = p.p.map((x) =>
         x.type === "text" ? x.content : `[${x.type}]`
-      ).join("");
+      ).join("").replace(/\n/g, "\\n");
+
       console.log(
         "[overlay] 受信",
         `| author:${p.a}`,
-        `| text:"${text.replace(/\n/g, "\\n")}"`,
+        `| text:"${text}"`,
         `| color:${p.color ?? "-"}`,
         `| pos:${p.position ?? "flow"}`,
         `| heading:${p.heading ?? "-"}`,
         `| styles:`, p.styles,
         `| chars:${p.charCount}`,
       );
+
       if (p.position === "top" || p.position === "bottom") {
         renderFixed(p);
       } else {
@@ -124,8 +144,12 @@
 
   socket.on("connect_error", (e) => {
     console.error("[overlay] 接続エラー:", e.message);
+    setTimeout(() => {
+      if (socket.connected) socket.emit("request_code");
+    }, 1000);
   });
 
+  // ── 認証エラー ────────────────────────────────────
   function showAuthError(msg) {
     authCodeDisplay.textContent = "ERROR";
     authCodeDisplay.style.color = "#ed4245";
@@ -137,72 +161,45 @@
     authScreen.appendChild(p);
   }
 
-  // ── パーツ要素生成 ────────────────────────────────
-  /**
-   * テキストパーツを改行で分割し、行ごとに div でラップして返す
-   * 絵文字は inline のまま同行に配置
-   * AA等の複数行テキストは各行が独立した div になる
-   */
+  // ── パーツ要素生成（改行・AA対応） ────────────────
   function buildParts(payload) {
     const deco = [];
     if (payload.styles?.underline)     deco.push("underline");
     if (payload.styles?.strikethrough) deco.push("line-through");
 
-    // パーツを「行」単位に分解する
-    // 行 = { parts: [{type, content}] } の配列
-    const lines = [[]]; // lines[0] = 最初の行
-
+    const lines = [[]];
     for (const part of payload.p) {
       if (part.type === "text") {
-        // テキストを改行で分割
         const segments = part.content.split("\n");
         segments.forEach((seg, i) => {
-          if (i > 0) {
-            // 改行があれば新しい行を追加
-            lines.push([]);
-          }
-          if (seg !== "") {
-            lines[lines.length - 1].push({ type: "text", content: seg });
-          } else if (i > 0) {
-            // 空行（連続改行）もそのまま空行として保持
-            // lines に空配列が積まれている状態で次へ
-          }
+          if (i > 0) lines.push([]);
+          lines[lines.length - 1].push({ type: "text", content: seg });
         });
       } else {
-        // emoji / sticker は現在の行末に追加
         lines[lines.length - 1].push(part);
       }
     }
 
     const frag = document.createDocumentFragment();
-
     for (const line of lines) {
-      // 1行分のコンテナ div
-      const row = document.createElement("div");
+      const row            = document.createElement("div");
       row.style.display    = "flex";
       row.style.alignItems = "center";
       row.style.gap        = "0.2em";
-      // 空行（AA の空白行など）は高さを確保
-      if (line.length === 0) {
-        row.style.minHeight = "1.4em";
-      }
+      row.style.minHeight  = "1.4em";
 
       for (const part of line) {
         if (part.type === "text") {
-          const span     = document.createElement("span");
-          span.className = "text-part";
-          if (payload.heading) span.classList.add(`h-${payload.heading}`);
-          // pre-wrap で行内の空白を保持（AA の位置合わせ）
+          const span            = document.createElement("span");
+          span.className        = "text-part";
+          if (payload.heading)  span.classList.add(`h-${payload.heading}`);
           span.style.whiteSpace = "pre";
           span.textContent      = part.content;
-
           if (payload.color)           span.style.color          = payload.color;
           if (payload.styles?.bold)    span.style.fontWeight     = "bold";
           if (payload.styles?.italic)  span.style.fontStyle      = "italic";
           if (deco.length > 0)         span.style.textDecoration = deco.join(" ");
-
           row.appendChild(span);
-
         } else if (part.type === "emoji") {
           const img     = document.createElement("img");
           img.className = "emoji";
@@ -210,7 +207,6 @@
           img.alt       = "";
           img.loading   = "lazy";
           row.appendChild(img);
-
         } else if (part.type === "sticker") {
           const img     = document.createElement("img");
           img.className = "sticker";
@@ -220,20 +216,17 @@
           row.appendChild(img);
         }
       }
-
       frag.appendChild(row);
     }
-
     return frag;
   }
 
   // ── 流れるコメント ────────────────────────────────
   function renderFlow(payload) {
-    if (flowCount >= MAX_FLOW_COMMENTS) return;
+    if (flowCount >= MAX_FLOW_COMMENTS) return;   // ← 可変参照
 
     const isSticker = payload.p.every((p) => p.type === "sticker");
-
-    const el = document.createElement("div");
+    const el        = document.createElement("div");
     el.className       = "comment";
     el.style.animation = "none";
     el.appendChild(buildParts(payload));
@@ -280,35 +273,26 @@
       idx = 0;
     }
 
-    const el = document.createElement("div");
+    const el     = document.createElement("div");
     el.className = "comment-fixed";
     el.appendChild(buildParts(payload));
 
     const H     = window.innerHeight;
     const rowPx = H * ROW_HEIGHT_VH / 100;
-
     const topPx = side === "top"
       ? idx * rowPx
       : H - (idx + 1) * rowPx;
 
     el.style.top = `${topPx}px`;
-
     stage.appendChild(el);
     slots[idx] = el;
 
-    console.log(
-      `[overlay] fixed side=${side} slot=${idx} top=${topPx.toFixed(1)}px`,
-    );
+    console.log(`[overlay] fixed side=${side} slot=${idx} top=${topPx.toFixed(1)}px`);
 
-    // ── 即時削除タイマー（フェードなし）──
-    const timerId = setTimeout(() => {
-      instantRemoveSlot(side, idx);
-    }, FIXED_DISPLAY_MS);
-
-    el._timerId = timerId;
+    const timerId = setTimeout(() => instantRemoveSlot(side, idx), FIXED_DISPLAY_MS);
+    el._timerId   = timerId;
   }
 
-  /** 即時削除（タイマー満了） */
   function instantRemoveSlot(side, idx) {
     const el = fixedSlots[side][idx];
     if (!el) return;
@@ -316,7 +300,6 @@
     fixedSlots[side][idx] = null;
   }
 
-  /** 強制即時削除（満杯時の排出） */
   function forceRemoveSlot(side, idx) {
     const el = fixedSlots[side][idx];
     if (!el) return;

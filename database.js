@@ -22,16 +22,19 @@ const DB_PATH   = join(__dirname, "db.json");
  * @property {string} channel_id   - 監視対象チャンネルID
  * @property {string} code         - 6桁認証コード
  * @property {number} expires_at   - Unix ms
+ * @property {number} max_comments - 同時表示上限
+
  */
 
 /**
  * @typedef {Object} ActiveSession
- * @property {string} token
- * @property {string} socket_id
- * @property {string} user_id
- * @property {string} channel_id
+ * @property {string} token        - UUID v4（PendingAuth と同一）
+ * @property {string} socket_id    - Socket.io の socket.id
+ * @property {string} user_id      - Discord ユーザーID
+ * @property {string} channel_id   - 監視対象チャンネルID
  * @property {string} aes_key      - 32バイト hex文字列
  * @property {number} created_at   - Unix ms
+ * @property {number} max_comments - 同時表示上限
  */
 
 /** @type {DbSchema} */
@@ -238,6 +241,12 @@ export const ActiveSessionDB = {
     );
     return db.write();
   },
+  updateMaxComments(socketId, maxComments) {
+    const record = db.data.active_sessions.find((r) => r.socket_id === socketId);
+    if (!record) return Promise.resolve();
+    record.max_comments = maxComments;
+    return db.write();
+},
 
   /**
    * 全セッションを削除（プロセス終了時クリーンアップ用）
