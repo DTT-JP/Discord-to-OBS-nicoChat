@@ -1,22 +1,21 @@
+discord/parser.js
 import { StickerFormatType } from "discord.js";
 
 // ─────────────────────────────────────────────
-// 正規表現
+// グローバル定数
+// g フラグなし・または while ループ専用のもののみここに置く
 // ─────────────────────────────────────────────
 
 /**
- * V2 メタデータブロック
- * g フラグ付き → replace で全置換できる
- * ★ 使用後は必ず lastIndex をリセットする
+ * カスタム絵文字: while ループで使うため g フラグ必須
+ * 使用前後に必ず lastIndex = 0 をリセットする
  */
-const RE_META_BLOCK    = /\?([^?]+)\?/g;
+const RE_ANY_EMOJI = /<(a?):([^:]+):(\d+)>/g;
 
-const RE_ANY_EMOJI     = /<(a?):([^:]+):(\d+)>/g;
-const RE_HEADING       = /^(-#|#{1,3})\s*/;
-const RE_BOLD          = /\*\*(.+?)\*\*/gs;
-const RE_ITALIC        = /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/gs;
-const RE_UNDERLINE     = /__(.+?)__/gs;
-const RE_STRIKETHROUGH = /~~(.+?)~~/gs;
+/**
+ * Discord 見出し: g フラグなし・exec() 1回のみ使用するため安全
+ */
+const RE_HEADING = /^(-#|#{1,3})\s*/;
 
 // ─────────────────────────────────────────────
 // マップ
@@ -53,8 +52,9 @@ const MSG_COMMANDS    = new Set(["invisible", "_live"]);
  * テキスト内の ?attr1 attr2? を全て抽出・除去して
  * color / size / position / sessionFx / msgCommands を返す
  *
- * ★ g フラグ付き正規表現を replace() で使うため
- *    関数呼び出しのたびに lastIndex をリセットする
+ * ★ 正規表現を関数内で毎回生成することで
+ *    g フラグの lastIndex 持続問題を完全回避する
+ *    → Windows/Debian/Node バージョン差による再現性の差をなくす
  */
 function parseMetaBlock(raw) {
   let color       = null;
@@ -63,10 +63,8 @@ function parseMetaBlock(raw) {
   const sessionFx   = [];
   const msgCommands = [];
 
-  // lastIndex を必ずリセット
-  RE_META_BLOCK.lastIndex = 0;
-
-  const cleaned = raw.replace(RE_META_BLOCK, (_, attrsRaw) => {
+  // ★ 毎回新しいオブジェクトを生成 → lastIndex は常に 0 から始まる
+  const cleaned = raw.replace(/\?([^?]+)\?/g, (_, attrsRaw) => {
     const attrs = attrsRaw.trim().toLowerCase().split(/\s+/);
 
     for (const attr of attrs) {
@@ -100,7 +98,7 @@ function parseMetaBlock(raw) {
         continue;
       }
       // メッセージ単位コマンド
-      // _live は全角スペース先頭でも来る可能性
+      // _live は全角スペース先頭でも来る可能性がある
       const normalized = attr.replace(/^\u3000/, "_live");
       if (MSG_COMMANDS.has(normalized)) {
         msgCommands.push(normalized);
@@ -113,9 +111,6 @@ function parseMetaBlock(raw) {
 
     return ""; // ブロック自体を除去
   });
-
-  // replace 後も lastIndex をリセット（念のため）
-  RE_META_BLOCK.lastIndex = 0;
 
   return {
     color,
@@ -144,40 +139,40 @@ function extractHeadingSize(text) {
 // インライン書式
 // ─────────────────────────────────────────────
 
+/**
+ * ★ 全ての正規表現を関数内ローカルで生成
+ *    グローバル g フラグ付き正規表現の lastIndex 持続問題を完全回避
+ *    動作は元コードと完全に同一
+ */
 function extractInlineStyles(text) {
   let bold = false, italic = false, underline = false, strikethrough = false;
 
-  RE_STRIKETHROUGH.lastIndex = 0;
-  if (RE_STRIKETHROUGH.test(text)) {
+  // 取り消し線
+  if (/~~(.+?)~~/gs.test(text)) {
     strikethrough = true;
-    RE_STRIKETHROUGH.lastIndex = 0;
-    text = text.replace(RE_STRIKETHROUGH, "$1");
+    text = text.replace(/~~(.+?)~~/gs, "$1");
   }
-  RE_STRIKETHROUGH.lastIndex = 0;
 
-  RE_UNDERLINE.lastIndex = 0;
-  if (RE_UNDERLINE.test(text)) {
+  // 下線（太字より先に処理）
+  if (/__(.+?)__/gs.test(text)) {
     underline = true;
-    RE_UNDERLINE.lastIndex = 0;
-    text = text.replace(RE_UNDERLINE, "$1");
+    text = text.replace(/__(.+?)__/gs, "$1");
   }
-  RE_UNDERLINE.lastIndex = 0;
 
-  RE_BOLD.lastIndex = 0;
-  if (RE_BOLD.test(text)) {
+  // 太字
+  if (/\*\*(.+?)\*\*/gs.test(text)) {
     bold = true;
-    RE_BOLD.lastIndex = 0;
-    text = text.replace(RE_BOLD, "$1");
+    text = text.replace(/\*\*(.+?)\*\*/gs, "$1");
   }
-  RE_BOLD.lastIndex = 0;
 
-  RE_ITALIC.lastIndex = 0;
-  if (RE_ITALIC.test(text)) {
+  // 斜体
+  if (/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/gs.test(text)) {
     italic = true;
-    RE_ITALIC.lastIndex = 0;
-    text = text.replace(RE_ITALIC, (_, g1, g2) => g1 ?? g2 ?? "");
+    text   = text.replace(
+      /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/gs,
+      (_, g1, g2) => g1 ?? g2 ?? "",
+    );
   }
-  RE_ITALIC.lastIndex = 0;
 
   return { bold, italic, underline, strikethrough, cleaned: text };
 }
@@ -190,6 +185,9 @@ function parseTextSegments(text) {
   const parts = [];
   let lastIndex = 0;
   let match;
+
+  // while ループで使う RE_ANY_EMOJI のみグローバル定数を再利用
+  // 使用前後に lastIndex をリセットして安全を担保
   RE_ANY_EMOJI.lastIndex = 0;
 
   while ((match = RE_ANY_EMOJI.exec(text)) !== null) {
@@ -206,12 +204,13 @@ function parseTextSegments(text) {
     lastIndex = RE_ANY_EMOJI.lastIndex;
   }
 
+  RE_ANY_EMOJI.lastIndex = 0; // 使用後もリセット
+
   if (lastIndex < text.length) {
     const seg = text.slice(lastIndex);
     if (seg) parts.push({ type: "text", content: seg });
   }
 
-  RE_ANY_EMOJI.lastIndex = 0;
   return parts;
 }
 
@@ -291,7 +290,7 @@ export function parseMessage(message, watchChannelIds) {
   let afterHeading = afterMeta;
   if (!size) {
     const h  = extractHeadingSize(afterMeta);
-    size         = h.size ?? "medium";  // ★ デフォルトは "medium"（null にしない）
+    size         = h.size ?? "medium"; // デフォルトは "medium"（null にしない）
     afterHeading = h.cleaned;
   }
 
@@ -310,8 +309,8 @@ export function parseMessage(message, watchChannelIds) {
     a:           message.member?.displayName ?? message.author.username,
     av:          message.author.displayAvatarURL({ size: 64, extension: "webp" }),
     color,
-    size,        // ★ "big" | "medium" | "small" のいずれか（null にならない）
-    position,    // ★ "ue" | "shita" | null
+    size,        // "big" | "medium" | "small" のいずれか（null にならない）
+    position,    // "ue" | "shita" | null
     sessionFx,
     msgCommands,
     styles:      { bold, italic, underline, strikethrough },

@@ -9,31 +9,24 @@
   const FIXED_DISPLAY_MS  = 5000;  // 上下固定の表示時間（ms）
 
   // 速度: 画面幅 / DIVISOR = px/秒
-  // 値が小さいほど速い
-  const SPEED_DIVISOR_MIN = 2.5;   // 短文（速い）
-  const SPEED_DIVISOR_MAX = 5.0;   // 長文（遅い）
+  const SPEED_DIVISOR_MIN = 2.5;
+  const SPEED_DIVISOR_MAX = 5.0;
   const CHAR_THRESHOLD    = 30;
 
-  /*
-   * テキストサイズ（vh単位）
-   * 1vh = 画面高さの1%
-   * OBS 1080p の場合:  big=130px / medium=65px / small=32px
-   * OBS  720p の場合:  big= 86px / medium=43px / small=22px
-   */
   const SIZE_CONFIG = {
     big:    { vh: 12 },
     medium: { vh:  6 },
     small:  { vh:  3 },
   };
 
-  // セッションエフェクト（/secret コマンドで蓄積）
+  // セッションエフェクト
   const sessionEffects = new Set();
 
   // 衝突判定用
   const activeRects = [];
   const RECT_MARGIN = 4;
 
-  // 固定スロット（詰めない・個別タイマー）
+  // 固定スロット
   const FIXED_MAX_SLOTS = 20;
   const fixedSlots = {
     ue:    new Array(FIXED_MAX_SLOTS).fill(null),
@@ -47,6 +40,26 @@
   const authScreen      = document.getElementById("auth-screen");
   const authCodeDisplay = document.getElementById("auth-code-display");
   const stage           = document.getElementById("stage");
+
+  // ────────────────────────────────────────────────
+  // ★ 修正1: 画面サイズ取得
+  //
+  // Linux の OBS ブラウザソース（CEF）では window.innerHeight / innerWidth が
+  // 初期化タイミングによって 0 を返すケースがある。
+  // → stage 要素の getBoundingClientRect() をフォールバックとして使い、
+  //   それも 0 なら OBS のデフォルト解像度（1920×1080）を仮定する。
+  // ────────────────────────────────────────────────
+  function getScreenSize() {
+    let W = window.innerWidth;
+    let H = window.innerHeight;
+
+    if (!W || !H) {
+      const r = stage.getBoundingClientRect();
+      W = r.width  || document.documentElement.clientWidth  || 1920;
+      H = r.height || document.documentElement.clientHeight || 1080;
+    }
+    return { W: W || 1920, H: H || 1080 };
+  }
 
   // ────────────────────────────────────────────────
   // Socket.io
@@ -91,16 +104,22 @@
   // ユーティリティ
   // ────────────────────────────────────────────────
 
-  /** vh → px 変換（window.innerHeight ベース） */
+  /**
+   * ★ 修正2: vh → px 変換
+   *
+   * 元のコードは window.innerHeight を直接使っていたが、
+   * Linux OBS CEF では innerHeight が 0 を返す場合がある。
+   * getScreenSize() 経由で安全に H を取得する。
+   */
   function vhToPx(vh) {
-    return Math.round(window.innerHeight * vh / 100);
+    const { H } = getScreenSize();
+    return Math.round(H * vh / 100);
   }
 
   /** 速度計算（px/秒） */
   function calcSpeed(charCount) {
-    const W       = window.innerWidth;
+    const { W } = getScreenSize();
     const r       = Math.min(charCount, CHAR_THRESHOLD) / CHAR_THRESHOLD;
-    // 短文ほど速い（divisor が小さい）
     const divisor = SPEED_DIVISOR_MIN + (SPEED_DIVISOR_MAX - SPEED_DIVISOR_MIN) * (1 - r);
     return W / divisor;
   }
@@ -148,12 +167,10 @@
     try {
       const p = await decryptPayload(enc, aesKey);
 
-      // セッションエフェクト蓄積
       if (p.sessionFx?.length > 0) {
         for (const fx of p.sessionFx) sessionEffects.add(fx);
       }
 
-      // invisible: 描画しない
       if (p.msgCommands?.includes("invisible")) return;
 
       if (p.position === "ue" || p.position === "shita") {
@@ -208,24 +225,23 @@
   // ────────────────────────────────────────────────
 
   /**
-   * payload の p[] から DOM Fragment を生成する
+   * ★ 修正3: 色の適用
    *
-   * サイズ: SIZE_CONFIG の vh を window.innerHeight で px に変換して
-   *        style.fontSize に直接セットする
-   *        → CSS クラスによるサイズ制御を完全に廃止し JS で一元管理
+   * 元のコードは span.style.color = payload.color を設定していたが、
+   * Linux OBS CEF では特定の条件でインラインスタイルが無視されることがある。
    *
-   * 斜体バグ: img 要素に fontStyle:"normal" / transform:"none" を明示
-   *          → 親要素の italic が img に継承されない
+   * 対策:
+   *  - style.setProperty("color", value, "important") で強制上書き
+   *  - gaming エフェクト判定を正確に行い、gaming 時のみ color を設定しない
    */
   function buildParts(payload, forFixed = false) {
     const sizeKey = (payload.size && SIZE_CONFIG[payload.size])
       ? payload.size
       : "medium";
 
-    // ★ ここで px に変換して使う
-    const sizePx  = vhToPx(SIZE_CONFIG[sizeKey].vh);
-    const emojiPx = sizePx;             // 絵文字 = テキストと同じ高さ
-    const stickerPx = sizePx * 2;       // スタンプ = テキストの2倍
+    const sizePx    = vhToPx(SIZE_CONFIG[sizeKey].vh);
+    const emojiPx   = sizePx;
+    const stickerPx = sizePx * 2;
 
     const hasGaming = sessionEffects.has("gaming") || (payload.sessionFx?.includes("gaming") ?? false);
     const isItalic  = payload.styles?.italic ?? false;
@@ -234,7 +250,6 @@
     if (payload.styles?.underline)     deco.push("underline");
     if (payload.styles?.strikethrough) deco.push("line-through");
 
-    // テキストを行単位に分解
     const lines = [[]];
     for (const part of payload.p) {
       if (part.type === "text") {
@@ -262,19 +277,22 @@
         if (part.type === "text") {
           const span              = document.createElement("span");
           span.className          = "text-part";
-          // ★ font-size を px で直接セット（vh や em は使わない）
           span.style.fontSize     = `${sizePx}px`;
           span.style.lineHeight   = "1.3";
           span.style.whiteSpace   = "pre";
-          span.style.color        = "#ffffff"; // デフォルト白
+
+          // ★ 修正3: color を !important で強制設定
+          if (!hasGaming) {
+            const color = payload.color || "#ffffff";
+            span.style.setProperty("color", color, "important");
+          }
+          // gaming エフェクト時は color を設定しない（CSS animation が有効になる）
+
           span.textContent        = part.content;
 
-          // 色（gaming が有効な場合は上書きしない）
-          if (payload.color && !hasGaming) span.style.color = payload.color;
-
-          if (payload.styles?.bold)  span.style.fontWeight     = "bold";
-          if (isItalic)              span.style.fontStyle       = "italic";
-          if (deco.length > 0)       span.style.textDecoration  = deco.join(" ");
+          if (payload.styles?.bold)  span.style.fontWeight    = "bold";
+          if (isItalic)              span.style.fontStyle      = "italic";
+          if (deco.length > 0)       span.style.textDecoration = deco.join(" ");
 
           row.appendChild(span);
 
@@ -284,13 +302,12 @@
           img.src                 = part.content;
           img.alt                 = "";
           img.loading             = "lazy";
-          // ★ 高さを px で直接セット
           img.style.height        = `${emojiPx}px`;
           img.style.width         = "auto";
           img.style.verticalAlign = "middle";
           img.style.display       = "inline-block";
-          img.style.fontStyle     = "normal";   // 斜体継承リセット
-          img.style.transform     = "none";      // 変形継承リセット
+          img.style.fontStyle     = "normal";
+          img.style.transform     = "none";
           row.appendChild(img);
 
         } else if (part.type === "sticker") {
@@ -337,7 +354,8 @@
     }
 
     const step    = Math.max(2, Math.floor(elH / 4));
-    const safeMax = Math.min(maxY, window.innerHeight - elH);
+    const { H }   = getScreenSize();
+    const safeMax = Math.min(maxY, H - elH);
     let bestY     = minY;
     let bestScore = -Infinity;
 
@@ -379,10 +397,9 @@
     flowCount++;
 
     requestAnimationFrame(() => {
-      const W      = window.innerWidth;
-      const H      = window.innerHeight;
-      const elW    = el.offsetWidth;
-      const elH    = el.offsetHeight;
+      const { W, H } = getScreenSize();
+      const elW      = el.offsetWidth;
+      const elH      = el.offsetHeight;
 
       const minY = Math.round(H * 0.01);
       const maxY = Math.round(H * 0.98) - elH;
@@ -404,7 +421,9 @@
         );
         anim.onfinish = () => { el.remove(); flowCount--; };
       } else {
-        el.style.left      = "100vw";
+        // ★ 修正4: "100vw" の代わりに px 値を直接設定
+        // Linux OBS CEF では vw 単位が正しく解釈されないケースがある
+        el.style.left      = `${W}px`;
         el.style.animation = `flow ${duration}s linear forwards`;
         el.addEventListener("animationend", () => { el.remove(); flowCount--; }, { once: true });
       }
@@ -431,32 +450,32 @@
   // ────────────────────────────────────────────────
 
   /**
-   * Y座標計算
-   * ue:    index 0 = 最上段（top: 0）から下へ積み上げ
-   * shita: index 0 = 最下段（bottom: 画面下端）から上へ積み上げ
+   * ★ 修正5: 上下固定コメントの座標計算
    *
-   * 消えたスロット（null）はスキップせず height=0 として扱う
-   * → 消えても位置がずれない
+   * 元のコードは shita（下固定）でも top を計算して style.top に設定していた。
+   * Linux OBS CEF では負の top や大きな top が正しく処理されない場合がある。
+   *
+   * 修正:
+   *  - ue（上固定）   → style.top    に px を直接設定（変わらず）
+   *  - shita（下固定）→ style.bottom に px を直接設定（new）
+   *    element の bottom からの距離を計算することで負値を回避
    */
-  function calcFixedTopY(side, slotIndex, elH) {
-    const H     = window.innerHeight;
-    const slots = fixedSlots[side];
-    let offset  = 0;
+  function calcFixedPosition(side, slotIndex, elH) {
+    const { H }   = getScreenSize();
+    const slots   = fixedSlots[side];
+    let offset    = 0;
 
     for (let i = 0; i < slotIndex; i++) {
       if (slots[i]) {
         offset += slots[i].height + RECT_MARGIN;
       }
-      // null（空きスロット）は height を加算しない
-      // → そのスロットを使っていたコメントが消えた後、
-      //   後続のコメントは元の位置を維持する
     }
 
     if (side === "ue") {
-      return offset;
+      return { prop: "top",    value: offset };
     } else {
-      // 下固定: 画面下端 - 累積 - この要素の高さ
-      return H - offset - elH;
+      // bottom プロパティで指定: 画面下端からのオフセット
+      return { prop: "bottom", value: offset };
     }
   }
 
@@ -464,13 +483,10 @@
     const side  = payload.position; // "ue" | "shita"
     const slots = fixedSlots[side];
 
-    // 空きスロット（null）を探す
     let slotIndex = slots.findIndex((s) => s === null);
     if (slotIndex === -1) {
-      // 空きなし → 末尾に追加
       slotIndex = slots.length < FIXED_MAX_SLOTS ? slots.length : 0;
       if (slotIndex === 0) {
-        // 上限に達したら最古を強制削除
         const oldest = slots[0];
         if (oldest) {
           clearTimeout(oldest.timerId);
@@ -483,23 +499,37 @@
     const el            = document.createElement("div");
     el.className        = "comment-fixed";
     el.style.visibility = "hidden";
+
+    // ★ 修正5: shita のとき top ではなく bottom を使うので
+    //   先に top をリセットしておく（CSSクラスに top: auto を明示）
+    if (side === "shita") {
+      el.style.top    = "auto";
+      el.style.bottom = "0px"; // 仮置き（rAF 内で上書き）
+    }
+
     el.appendChild(buildParts(payload, true));
     applyEffectClasses(el, payload.msgCommands, payload.sessionFx);
 
     stage.appendChild(el);
 
-    // レイアウト確定後に高さを取得してY座標を計算
     requestAnimationFrame(() => {
-      const elH  = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
-      const topY = calcFixedTopY(side, slotIndex, elH);
+      const elH      = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
+      const pos      = calcFixedPosition(side, slotIndex, elH);
 
-      el.style.top        = `${topY}px`;
+      // ★ top / bottom どちらを使うか分岐
+      if (pos.prop === "top") {
+        el.style.top    = `${pos.value}px`;
+        el.style.bottom = "auto";
+      } else {
+        el.style.bottom = `${pos.value}px`;
+        el.style.top    = "auto";
+      }
+
       el.style.visibility = "visible";
 
-      const entry = { el, height: elH, topY, timerId: null };
+      const entry = { el, height: elH, timerId: null };
       slots[slotIndex] = entry;
 
-      // 5秒後に即時削除（詰めない）
       entry.timerId = setTimeout(() => {
         el.remove();
         slots[slotIndex] = null;
