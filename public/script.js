@@ -6,7 +6,7 @@
   // ────────────────────────────────────────────────
 
   let MAX_FLOW_COMMENTS = 30;       // auth_success で上書き
-  const FIXED_DISPLAY_MS  = 5000;  // 上下固定の表示時間（ms）
+  const FIXED_DISPLAY_MS  = 4000;  // 上下固定の表示時間（ms）
 
   // 速度: 画面幅 / DIVISOR = px/秒
   const SPEED_DIVISOR_MIN = 2.5;
@@ -349,33 +349,48 @@
 
   function findFreeY(elH, minY, maxY) {
     const now = performance.now();
+
+    // 期限切れ矩形を削除
     for (let i = activeRects.length - 1; i >= 0; i--) {
       if (now > activeRects[i].expire) activeRects.splice(i, 1);
     }
 
-    const step    = Math.max(2, Math.floor(elH / 4));
-    const { H }   = getScreenSize();
-    const safeMax = Math.min(maxY, H - elH);
-    let bestY     = minY;
-    let bestScore = -Infinity;
+    // maxY が minY 以下（画面より要素が大きい）→ 上端固定
+    if (maxY <= minY) return minY;
 
-    for (let y = minY; y <= safeMax; y += step) {
+    const range = maxY - minY;
+
+    // 指定Y座標が既存矩形と衝突する重なり量を返す（0なら衝突なし）
+    function overlapAt(y) {
       const bottom = y + elH;
-      let collide  = false;
-      let minGap   = Infinity;
-
+      let maxOverlap = 0;
       for (const r of activeRects) {
         const ot = Math.max(y - RECT_MARGIN,      r.top    - RECT_MARGIN);
         const ob = Math.min(bottom + RECT_MARGIN, r.bottom + RECT_MARGIN);
-        if (ob > ot) { collide = true; minGap = Math.min(minGap, ob - ot); }
+        if (ob > ot) maxOverlap = Math.max(maxOverlap, ob - ot);
       }
-
-      if (!collide) return y;
-      const score = -minGap;
-      if (score > bestScore) { bestScore = score; bestY = y; }
+      return maxOverlap;
     }
 
-    return Math.max(minY, Math.min(bestY, safeMax));
+    // ランダムな位置を最大20回試して衝突なしを探す
+    let bestY     = Math.floor(Math.random() * (range + 1)) + minY;
+    let bestScore = Infinity;
+
+    for (let i = 0; i < 20; i++) {
+      const candidate = Math.floor(Math.random() * (range + 1)) + minY;
+      const overlap   = overlapAt(candidate);
+
+      if (overlap === 0) return candidate; // 衝突なし → 即確定
+
+      // 衝突があっても最も重なりが少ない位置を記録
+      if (overlap < bestScore) {
+        bestScore = overlap;
+        bestY     = candidate;
+      }
+    }
+
+    // 20回全て衝突 → 重なりが最小の位置を maxY でクランプして返す
+    return Math.min(bestY, maxY);
   }
 
   // ────────────────────────────────────────────────
@@ -399,11 +414,15 @@
     requestAnimationFrame(() => {
       const { W, H } = getScreenSize();
       const elW      = el.offsetWidth;
-      const elH      = el.offsetHeight;
+      const elH      = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
 
-      const minY = Math.round(H * 0.01);
-      const maxY = Math.round(H * 0.98) - elH;
-      const topY = findFreeY(elH, minY, maxY);
+      // ── Y座標（ランダム・見切れ防止） ────────────
+      // 画面全体をランダムに使う
+      // 下が見切れないよう maxY = H - elH でクランプ
+      // 要素が画面より大きい場合は上端固定（下が見切れるのは仕方なし）
+      const minY = 0;
+      const maxY = Math.max(0, H - elH);
+      const topY = elH >= H ? 0 : findFreeY(elH, minY, maxY);
 
       const speed    = calcSpeed(payload.charCount ?? 10);
       const distance = W + elW;
