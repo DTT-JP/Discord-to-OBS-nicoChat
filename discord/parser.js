@@ -4,11 +4,8 @@ import { StickerFormatType } from "discord.js";
 // 定数
 // ─────────────────────────────────────────────
 
-/**
- * V2 メタデータブロック: ?attr1 attr2?
- * 行のどこにあっても認識する（先頭・末尾・中間すべて対応）
- */
-const RE_META_BLOCK = /\?([^?]+)\?\s*/;
+/** V2 メタデータブロック: ?attr1 attr2? （位置不問） */
+const RE_META_BLOCK = /\?([^?]+)\?\s*/g;
 
 const RE_ANY_EMOJI     = /<(a?):([^:]+):(\d+)>/g;
 const RE_HEADING       = /^(-#|#{1,3})\s*/;
@@ -18,7 +15,7 @@ const RE_UNDERLINE     = /__(.+?)__/gs;
 const RE_STRIKETHROUGH = /~~(.+?)~~/gs;
 
 // ─────────────────────────────────────────────
-// カラーマップ
+// マップ
 // ─────────────────────────────────────────────
 
 const NAMED_COLORS = {
@@ -45,36 +42,18 @@ const HEADING_SIZE_MAP = {
 const SESSION_EFFECTS = new Set(["gaming", "reverse", "loop"]);
 
 /**
- * メッセージ単位の隠しコマンド（? ? 内に記述）
- * セッション蓄積ではなくそのメッセージのみに適用
+ * メッセージ単位の隠しコマンド
+ * invisible と _live のみ残す
  */
 const MSG_COMMANDS = new Set([
-  "invisible",   // コメントを非表示
-  "full",        // 臨界幅変更
-  "patissier",   // 保持数条件変更
-  "ender",       // 改行リサイズ無効
-  "_live",       // 半透過
-  "ca",          // ニコる残存回避
+  "invisible",  // コメントを非表示
+  "_live",      // 半透過
 ]);
 
 // ─────────────────────────────────────────────
 // V2 メタブロックパーサー
 // ─────────────────────────────────────────────
 
-/**
- * テキスト内の `?attr1 attr2?` を行のどこからでも抽出して解析する
- * メタブロックはテキストから除去される
- *
- * @param {string} raw
- * @returns {{
- *   color:       string|null,
- *   size:        "big"|"medium"|"small"|null,
- *   position:    "ue"|"shita"|null,
- *   sessionFx:   string[],   // gaming/reverse/loop
- *   msgCommands: string[],   // invisible/full/patissier/ender/_live/ca
- *   cleaned:     string
- * }}
- */
 function parseMetaBlock(raw) {
   let color       = null;
   let size        = null;
@@ -82,50 +61,26 @@ function parseMetaBlock(raw) {
   const sessionFx   = [];
   const msgCommands = [];
 
-  // テキスト全体からメタブロックを全て抽出（複数対応）
-  let cleaned = raw.replace(RE_META_BLOCK, (_, attrsRaw) => {
+  const cleaned = raw.replace(RE_META_BLOCK, (_, attrsRaw) => {
     const attrs = attrsRaw.trim().toLowerCase().split(/\s+/);
 
     for (const attr of attrs) {
-      if (NAMED_COLORS[attr] !== undefined) {
-        color = NAMED_COLORS[attr];
-        continue;
-      }
-      if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/.test(attr)) {
-        color = attr;
-        continue;
-      }
-      if (attr === "big" || attr === "medium" || attr === "small") {
-        size = attr;
-        continue;
-      }
+      if (NAMED_COLORS[attr] !== undefined) { color = NAMED_COLORS[attr]; continue; }
+      if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/.test(attr)) { color = attr; continue; }
+      if (attr === "big" || attr === "medium" || attr === "small") { size = attr; continue; }
       if (attr === "ue")    { position = "ue";    continue; }
       if (attr === "shita") { position = "shita"; continue; }
-      if (SESSION_EFFECTS.has(attr)) {
-        sessionFx.push(attr);
-        continue;
-      }
-      // メッセージ単位コマンド（_live は先頭全角スペース付きで来る場合もある）
-      const normalizedAttr = attr.replace(/^\u3000/, "_live"); // 全角スペース→_live
-      if (MSG_COMMANDS.has(normalizedAttr)) {
-        msgCommands.push(normalizedAttr);
-        continue;
-      }
-      if (MSG_COMMANDS.has(attr)) {
-        msgCommands.push(attr);
-      }
+      if (SESSION_EFFECTS.has(attr)) { sessionFx.push(attr); continue; }
+      // _live は先頭全角スペース付きでも来る可能性がある
+      const normalized = attr.startsWith("\u3000") ? "_live" : attr;
+      if (MSG_COMMANDS.has(normalized)) msgCommands.push(normalized);
+      else if (MSG_COMMANDS.has(attr))  msgCommands.push(attr);
     }
-    return ""; // ブロック自体を除去
+    return "";
   });
 
-  return {
-    color,
-    size,
-    position,
-    sessionFx,
-    msgCommands,
-    cleaned: cleaned.trim(),
-  };
+  RE_META_BLOCK.lastIndex = 0;
+  return { color, size, position, sessionFx, msgCommands, cleaned: cleaned.trim() };
 }
 
 // ─────────────────────────────────────────────
@@ -135,10 +90,7 @@ function parseMetaBlock(raw) {
 function extractHeadingSize(text) {
   const m = RE_HEADING.exec(text);
   if (!m) return { size: null, cleaned: text };
-  return {
-    size:    HEADING_SIZE_MAP[m[1]] ?? null,
-    cleaned: text.slice(m[0].length).trimStart(),
-  };
+  return { size: HEADING_SIZE_MAP[m[1]] ?? null, cleaned: text.slice(m[0].length).trimStart() };
 }
 
 // ─────────────────────────────────────────────
@@ -148,26 +100,10 @@ function extractHeadingSize(text) {
 function extractInlineStyles(text) {
   let bold = false, italic = false, underline = false, strikethrough = false;
 
-  if (RE_STRIKETHROUGH.test(text)) {
-    strikethrough = true;
-    text = text.replace(RE_STRIKETHROUGH, "$1");
-    RE_STRIKETHROUGH.lastIndex = 0;
-  }
-  if (RE_UNDERLINE.test(text)) {
-    underline = true;
-    text = text.replace(RE_UNDERLINE, "$1");
-    RE_UNDERLINE.lastIndex = 0;
-  }
-  if (RE_BOLD.test(text)) {
-    bold = true;
-    text = text.replace(RE_BOLD, "$1");
-    RE_BOLD.lastIndex = 0;
-  }
-  if (RE_ITALIC.test(text)) {
-    italic = true;
-    text   = text.replace(RE_ITALIC, (_, g1, g2) => g1 ?? g2 ?? "");
-    RE_ITALIC.lastIndex = 0;
-  }
+  if (RE_STRIKETHROUGH.test(text)) { strikethrough = true; text = text.replace(RE_STRIKETHROUGH, "$1"); RE_STRIKETHROUGH.lastIndex = 0; }
+  if (RE_UNDERLINE.test(text))     { underline     = true; text = text.replace(RE_UNDERLINE, "$1");     RE_UNDERLINE.lastIndex     = 0; }
+  if (RE_BOLD.test(text))          { bold          = true; text = text.replace(RE_BOLD, "$1");          RE_BOLD.lastIndex          = 0; }
+  if (RE_ITALIC.test(text))        { italic        = true; text = text.replace(RE_ITALIC, (_, g1, g2) => g1 ?? g2 ?? ""); RE_ITALIC.lastIndex = 0; }
 
   return { bold, italic, underline, strikethrough, cleaned: text };
 }
@@ -204,7 +140,7 @@ function parseTextSegments(text) {
 }
 
 // ─────────────────────────────────────────────
-// スタンプ
+// スタンプ（Discordのチャット側には表示されない・OBSのみ）
 // ─────────────────────────────────────────────
 
 function parseStickerParts(stickers) {
@@ -241,7 +177,7 @@ export function parseMessage(message, watchChannelIds) {
   if (message.author.bot) return null;
   if (!watchChannelIds.includes(message.channelId)) return null;
 
-  // スタンプ専用
+  // スタンプ専用（OBSのみに表示・Discordのチャット側には表示されない）
   if (message.stickers.size > 0) {
     const parts = parseStickerParts(message.stickers);
     if (parts.length === 0) return null;
@@ -263,17 +199,9 @@ export function parseMessage(message, watchChannelIds) {
   const rawContent = message.content;
   if (!rawContent.trim()) return null;
 
-  // ── メタブロック解析（位置不問） ──────────────
-  const {
-    color,
-    size:        metaSize,
-    position,
-    sessionFx,
-    msgCommands,
-    cleaned:     afterMeta,
-  } = parseMetaBlock(rawContent);
+  const { color, size: metaSize, position, sessionFx, msgCommands, cleaned: afterMeta } =
+    parseMetaBlock(rawContent);
 
-  // ── 見出しからサイズ推測（メタ指定優先） ──────
   let size        = metaSize;
   let afterHeading = afterMeta;
   if (!size) {
@@ -282,19 +210,11 @@ export function parseMessage(message, watchChannelIds) {
     afterHeading = h.cleaned;
   }
 
-  // ── インライン書式 ────────────────────────────
   const { bold, italic, underline, strikethrough, cleaned: afterStyles } =
     extractInlineStyles(afterHeading);
 
-  // ── テキスト分割 ──────────────────────────────
   const parts = parseTextSegments(afterStyles);
   if (parts.length === 0) return null;
-
-  console.log(
-    `[parser] color=${color} size=${size} pos=${position}`,
-    `sessionFx=[${sessionFx}] msgCmds=[${msgCommands}]`,
-    `cleaned="${afterStyles.replace(/\n/g, "\\n")}"`,
-  );
 
   return {
     t:           message.createdTimestamp,

@@ -1,4 +1,5 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from "discord.js";
+import { VERSION } from "../utils/version.js";
 
 export const data = new SlashCommandBuilder()
   .setName("help")
@@ -25,7 +26,7 @@ export async function execute(interaction) {
       // ── 基本コマンド ──────────────────────────
       {
         name:  "🎬 `/start #チャンネル [limit:数値]`",
-        value: "OBSオーバーレイのセッションを開始します。\nDMにOBS用URLが送信されます。limit で同時表示上限を指定（デフォルト: 環境変数の MAX_COMMENTS）。",
+        value: "OBSオーバーレイのセッションを開始します。\nDMにOBS用URLが送信されます。`limit` で同時表示上限を指定できます（1〜99999、デフォルト: 環境変数の MAX_COMMENTS）。",
         inline: false,
       },
       {
@@ -40,7 +41,7 @@ export async function execute(interaction) {
       },
       {
         name:  "📊 `/status`",
-        value: "CPU・メモリ使用率と自分のアクティブセッション状況を表示します。",
+        value: "CPU・メモリ使用率、稼働時間、バージョン、自分のアクティブセッション状況を表示します。",
         inline: false,
       },
       // ── メタデータ書式 ──────────────────────────
@@ -48,7 +49,7 @@ export async function execute(interaction) {
         name:  "🎨 メタデータ書式 `?属性 属性?`",
         value: [
           "メッセージ内の `?` と `?` の間に属性を指定します。",
-          "テキストのどこに書いても認識されます。",
+          "**テキストのどこに書いても認識されます。**",
           "",
           "**色指定**",
           "`white` `red` `pink` `yellow` `orange`",
@@ -60,7 +61,7 @@ export async function execute(interaction) {
           "Discord書式 `# テキスト`（H1〜H3、`-#`）でも指定可能",
           "",
           "**位置指定**",
-          "`ue`（上固定・5秒表示）/ `shita`（下固定・5秒表示）",
+          "`ue`（上固定・5秒）/ `shita`（下固定・5秒）",
           "指定なし → 画面を横断して流れます",
         ].join("\n"),
         inline: false,
@@ -74,32 +75,24 @@ export async function execute(interaction) {
         ].join("\n"),
         inline: false,
       },
-      // ── メタデータ隠しコマンド ────────────────
+      // ── 絵文字・スタンプ ──────────────────────
       {
-        name:  "🔮 `? ?` 内の隠しコマンド",
+        name:  "😀 絵文字・スタンプ",
         value: [
-          "以下のコマンドを `? ?` 内に記述すると特殊効果が得られます。",
-          "これらはそのメッセージのみに適用されます。",
-          "",
-          "`invisible` — コメントが動画上に表示されない",
-          "`full` — コメントの臨界幅を変更",
-          "`patissier` — コメント保持数の条件を変更",
-          "`ender` — 改行リサイズを無効化",
-          "`_live` — コメントを半透過表示",
-          "`ca` — ニコる残存期間延長を回避",
+          "サーバーのカスタム絵文字はOBSにインライン画像として表示されます。",
+          "絵文字のサイズはテキストのフォントサイズに連動します。",
+          "**スタンプはOBSのオーバーレイにのみ表示されます（Discordのチャット欄には表示されません）。**",
         ].join("\n"),
         inline: false,
       },
-      // ── 組み合わせ例 ──────────────────────────
+      // ── 記述例 ────────────────────────────────
       {
         name:  "💡 記述例",
         value: [
           "`?red ue? お知らせ` → 赤色・上固定",
           "`?blue big? **重要** テキスト` → 青色・大文字・太字・流れる",
-          "`テキスト ?shita green?` → 緑色・下固定（どこに書いてもOK）",
-          "`?invisible? 内緒のメッセージ` → オーバーレイに表示されない",
-          "`?_live? 薄いコメント` → 半透過表示",
-          "`?ender? 改行してもリサイズしないコメント`",
+          "`テキスト ?shita green?` → 緑色・下固定（末尾でもOK）",
+          "`?#ff8800 big ue? カスタムカラー` → HEX指定・大文字・上固定",
         ].join("\n"),
         inline: false,
       },
@@ -107,7 +100,7 @@ export async function execute(interaction) {
       {
         name:  "📌 認証フロー",
         value: [
-          "1. `/start #チャンネル` でURLを取得",
+          "1. `/start #チャンネル` でURLを取得（DMに送信されます）",
           "2. OBSのブラウザソースにURLを貼り付け",
           "3. 画面に表示された6桁コードを確認",
           "4. `/auth [コード]` で認証完了",
@@ -115,7 +108,7 @@ export async function execute(interaction) {
         inline: false,
       },
     )
-    .setFooter({ text: "コメントは文字数が多いほど速く流れます | 一部コマンドは非公開です" })
+    .setFooter({ text: `v${VERSION} | コメントは文字数が多いほど速く流れます` })
     .setTimestamp();
 
   return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });

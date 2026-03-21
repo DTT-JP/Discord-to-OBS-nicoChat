@@ -123,33 +123,13 @@
     try {
       const p = await decryptPayload(enc, aesKey);
 
-      const text = p.p.map((x) =>
-        x.type === "text" ? x.content : `[${x.type}]`
-      ).join("").replace(/\n/g, "\\n");
-
-      console.log(
-        "[overlay] 受信",
-        `| author:${p.a}`,
-        `| text:"${text}"`,
-        `| color:${p.color ?? "-"}`,
-        `| size:${p.size}`,
-        `| pos:${p.position ?? "flow"}`,
-        `| sessionFx:[${p.sessionFx?.join(",") || "-"}]`,
-        `| msgCmds:[${p.msgCommands?.join(",") || "-"}]`,
-        `| styles:`, p.styles,
-        `| chars:${p.charCount}`,
-      );
-
       // セッションエフェクト更新
       if (p.sessionFx?.length > 0) {
         for (const fx of p.sessionFx) sessionEffects.add(fx);
       }
 
       // invisible: 描画しない
-      if (p.msgCommands?.includes("invisible")) {
-        console.log("[overlay] invisible: 描画スキップ");
-        return;
-      }
+      if (p.msgCommands?.includes("invisible")) return;
 
       if (p.position === "ue" || p.position === "shita") {
         renderFixed(p);
@@ -413,11 +393,6 @@
         bottom: topY + elH,
         expire: performance.now() + duration * 1000 + 500,
       });
-
-      console.log(
-        `[overlay] flow size=${payload.size}(${vhToPx(SIZE_VH[payload.size ?? "medium"]).toFixed(0)}px)`,
-        `elW=${elW}px elH=${elH}px top=${topY.toFixed(0)}px dur=${duration.toFixed(2)}s`,
-      );
     });
   }
 
