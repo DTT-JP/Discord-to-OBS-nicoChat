@@ -3,39 +3,32 @@
 
   // ── 設定 ────────────────────────────────────────
   let MAX_FLOW_COMMENTS = 30;
-  const FIXED_DISPLAY_MS = 5000;  // 固定表示: 5秒
+  const FIXED_DISPLAY_MS = 5000;
 
-  // 速度: 画面幅 / DIVISOR = px/秒
-  const SPEED_DIVISOR_MIN = 2.5;  // 短文（速い）
-  const SPEED_DIVISOR_MAX = 5.0;  // 長文（遅い）
+  const SPEED_DIVISOR_MIN = 2.5;
+  const SPEED_DIVISOR_MAX = 5.0;
   const CHAR_THRESHOLD    = 30;
 
-  /*
-   * サイズ定義（vh単位）
-   * 絵文字はテキストと同じ高さに合わせる
-   */
   const SIZE_VH = { big: 12, medium: 6, small: 3 };
 
-  /*
-   * セッション内エフェクトフラグ
-   * /secret コマンドで on/off 制御される
-   */
   const sessionEffects = new Set();
-
-  // 衝突判定用矩形リスト
-  const activeRects  = [];
-  const RECT_MARGIN  = 4; // px: 上下マージン
+  const activeRects    = [];
+  const RECT_MARGIN    = 4;
 
   let aesKey    = null;
   let flowCount = 0;
 
   /*
    * 固定スロット管理
-   * ue[0]    = 上端に最も近い行
-   * shita[0] = 下端に最も近い行
-   * スロット数は無制限（画面に収まる範囲で動的計算）
+   * 各スロットは { el, timerId, height, topY } を持つ
+   * 消えても詰めず、そのまま空きになる（null）
+   * ue[0] = 最上段、shita[0] = 最下段
    */
-  const fixedSlots = { ue: [], shita: [] };
+  const FIXED_MAX_SLOTS = 20; // 上下それぞれの最大スロット数
+  const fixedSlots = {
+    ue:    new Array(FIXED_MAX_SLOTS).fill(null),
+    shita: new Array(FIXED_MAX_SLOTS).fill(null),
+  };
 
   const authScreen      = document.getElementById("auth-screen");
   const authCodeDisplay = document.getElementById("auth-code-display");
@@ -82,6 +75,10 @@
     return W / divisor;
   }
 
+  function vhToPx(vh) {
+    return window.innerHeight * vh / 100;
+  }
+
   // ── Socket イベント ──────────────────────────────
   socket.on("connect", () => {
     console.log("[overlay] 接続 id=", socket.id);
@@ -112,7 +109,6 @@
     console.log(`[overlay] 上限更新: ${maxComments}`);
   });
 
-  // /secret コマンドによるセッションエフェクト制御
   socket.on("apply_secret", ({ effect, value }) => {
     if (value) {
       sessionEffects.add(effect);
@@ -144,12 +140,12 @@
         `| chars:${p.charCount}`,
       );
 
-      // セッションエフェクトをペイロードから更新
+      // セッションエフェクト更新
       if (p.sessionFx?.length > 0) {
         for (const fx of p.sessionFx) sessionEffects.add(fx);
       }
 
-      // invisible コマンド: 描画しない
+      // invisible: 描画しない
       if (p.msgCommands?.includes("invisible")) {
         console.log("[overlay] invisible: 描画スキップ");
         return;
@@ -174,8 +170,16 @@
     console.warn("[overlay] 切断:", r);
     aesKey = null;
     sessionEffects.clear();
-    fixedSlots.ue    = [];
-    fixedSlots.shita = [];
+    // 全固定スロットをクリア
+    for (const side of ["ue", "shita"]) {
+      fixedSlots[side].forEach((slot) => {
+        if (slot) {
+          clearTimeout(slot.timerId);
+          slot.el.remove();
+        }
+      });
+      fixedSlots[side].fill(null);
+    }
     authCodeDisplay.textContent = "------";
     authCodeDisplay.style.color = "#57f287";
     authScreen.style.display    = "flex";
@@ -198,29 +202,23 @@
     authScreen.appendChild(p);
   }
 
-  // ── サイズ vh を px に変換 ────────────────────────
-  function vhToPx(vh) {
-    return window.innerHeight * vh / 100;
-  }
-
   // ── パーツ要素生成 ────────────────────────────────
   /**
-   * @param {object} payload
-   * @param {boolean} forFixed - 固定表示用（align-items: center）
+   * 斜体バグの修正:
+   * img要素に font-style: normal を明示して
+   * 親要素の italic が img に継承されないようにする
    */
   function buildParts(payload, forFixed = false) {
     const size   = payload.size ?? "medium";
     const sizeVh = SIZE_VH[size] ?? SIZE_VH.medium;
     const sizePx = vhToPx(sizeVh);
 
-    // 絵文字高さ = テキストと同じ（サイズ連動）
-    const emojiPx = sizePx;
-
     const deco = [];
     if (payload.styles?.underline)     deco.push("underline");
     if (payload.styles?.strikethrough) deco.push("line-through");
 
     const hasGaming = payload.sessionFx?.includes("gaming") || sessionEffects.has("gaming");
+    const isItalic  = payload.styles?.italic ?? false;
 
     // 行単位に分解
     const lines = [[]];
@@ -257,32 +255,39 @@
 
           if (payload.color && !hasGaming) span.style.color = payload.color;
           if (payload.styles?.bold)        span.style.fontWeight     = "bold";
-          if (payload.styles?.italic)      span.style.fontStyle      = "italic";
+          if (isItalic)                    span.style.fontStyle      = "italic";
           if (deco.length > 0)             span.style.textDecoration = deco.join(" ");
 
           row.appendChild(span);
 
         } else if (part.type === "emoji") {
-          const img           = document.createElement("img");
-          img.className       = "emoji";
-          img.src             = part.content;
-          img.alt             = "";
-          img.loading         = "lazy";
-          img.style.height    = `${emojiPx}px`;
-          img.style.width     = "auto";
+          const img               = document.createElement("img");
+          img.className           = "emoji";
+          img.src                 = part.content;
+          img.alt                 = "";
+          img.loading             = "lazy";
+          img.style.height        = `${sizePx}px`;   // テキストと同サイズ
+          img.style.width         = "auto";
           img.style.verticalAlign = "middle";
+          img.style.display       = "inline-block";
+          // ★ 斜体継承を明示的にリセット
+          img.style.fontStyle     = "normal";
+          img.style.transform     = "none";
           row.appendChild(img);
 
         } else if (part.type === "sticker") {
-          // スタンプはサイズの2倍
-          const img           = document.createElement("img");
-          img.className       = "sticker";
-          img.src             = part.content;
-          img.alt             = "";
-          img.loading         = "lazy";
-          img.style.height    = `${sizePx * 2}px`;
-          img.style.width     = "auto";
+          const img               = document.createElement("img");
+          img.className           = "sticker";
+          img.src                 = part.content;
+          img.alt                 = "";
+          img.loading             = "lazy";
+          img.style.height        = `${sizePx * 2}px`;
+          img.style.width         = "auto";
           img.style.verticalAlign = "middle";
+          img.style.display       = "inline-block";
+          // ★ 斜体継承を明示的にリセット
+          img.style.fontStyle     = "normal";
+          img.style.transform     = "none";
           row.appendChild(img);
         }
       }
@@ -297,16 +302,10 @@
   function applyEffectClasses(el, msgCommands, payloadSessionFx) {
     const allSession = new Set([...(payloadSessionFx ?? []), ...sessionEffects]);
 
-    // セッションエフェクト
-    if (allSession.has("gaming"))  el.classList.add("effect-gaming");
-    if (allSession.has("loop"))    el.classList.add("effect-loop");
-
-    // reverse はJS で transform を制御（CSSクラスなし）
-
-    // メッセージ単位コマンド
+    if (allSession.has("gaming")) el.classList.add("effect-gaming");
+    if (allSession.has("loop"))   el.classList.add("effect-loop");
     if (msgCommands?.includes("_live")) el.classList.add("effect-live");
 
-    // ender: 改行リサイズ無効（white-space: nowrap を強制）
     if (msgCommands?.includes("ender")) {
       el.querySelectorAll(".text-part").forEach((s) => {
         s.style.whiteSpace = "nowrap";
@@ -314,10 +313,9 @@
     }
   }
 
-  // ── 衝突判定: 空きY座標を探す ────────────────────
+  // ── 衝突判定 ─────────────────────────────────────
   function findFreeY(elH, minY, maxY) {
     const now = performance.now();
-    // 期限切れ矩形を削除
     for (let i = activeRects.length - 1; i >= 0; i--) {
       if (now > activeRects[i].expire) activeRects.splice(i, 1);
     }
@@ -333,21 +331,19 @@
       let minGap   = Infinity;
 
       for (const rect of activeRects) {
-        const overlapTop    = Math.max(y      - RECT_MARGIN, rect.top    - RECT_MARGIN);
-        const overlapBottom = Math.min(bottom + RECT_MARGIN, rect.bottom + RECT_MARGIN);
-        if (overlapBottom > overlapTop) {
+        const ot = Math.max(y - RECT_MARGIN, rect.top - RECT_MARGIN);
+        const ob = Math.min(bottom + RECT_MARGIN, rect.bottom + RECT_MARGIN);
+        if (ob > ot) {
           collide = true;
-          minGap  = Math.min(minGap, overlapBottom - overlapTop);
+          minGap  = Math.min(minGap, ob - ot);
         }
       }
 
       if (!collide) return y;
-
       const score = -minGap;
       if (score > bestScore) { bestScore = score; bestY = y; }
     }
 
-    // 全て衝突の場合、上端が見切れないことを優先
     return Math.max(minY, Math.min(bestY, safeMax));
   }
 
@@ -355,16 +351,12 @@
   function renderFlow(payload) {
     if (flowCount >= MAX_FLOW_COMMENTS) return;
 
-    const size   = payload.size ?? "medium";
-    const sizeVh = SIZE_VH[size] ?? SIZE_VH.medium;
-
     const el           = document.createElement("div");
     el.className       = "comment";
     el.style.animation = "none";
     el.style.visibility = "hidden";
     el.appendChild(buildParts(payload, false));
 
-    // reverse はページに追加前に left 位置を調整
     const hasReverse = payload.sessionFx?.includes("reverse") || sessionEffects.has("reverse");
 
     stage.appendChild(el);
@@ -376,7 +368,6 @@
       const elW    = el.offsetWidth;
       const elH    = el.offsetHeight;
 
-      // Y座標: 流れコメントはフリー帯域全体（衝突判定つき）
       const minY = H * 0.01;
       const maxY = H * 0.98 - elH;
       const topY = findFreeY(elH, minY, maxY);
@@ -390,20 +381,15 @@
       el.style.setProperty("--duration",  `${duration}s`);
 
       if (hasReverse) {
-        // 左端外側からスタートして右へ
-        el.style.left      = `-${elW}px`;
-        el.style.animation = `flow ${duration}s linear forwards`;
-        el.style.transform = `scaleX(-1) translateX(-${distance}px)`;
-        // reverse 用に別アニメーションを適用
-        el.style.animation = "none";
-        el.style.left      = `-${elW}px`;
-        el.animate(
+        el.style.left = `-${elW}px`;
+        const anim = el.animate(
           [
             { transform: "translateX(0)" },
             { transform: `translateX(${distance}px)` },
           ],
           { duration: duration * 1000, easing: "linear", fill: "forwards" },
-        ).onfinish = () => { el.remove(); flowCount--; };
+        );
+        anim.onfinish = () => { el.remove(); flowCount--; };
       } else {
         el.style.left      = "100vw";
         el.style.animation = `flow ${duration}s linear forwards`;
@@ -415,17 +401,13 @@
 
       el.style.visibility = "visible";
 
-      // loop エフェクト上書き
       const hasLoop = payload.sessionFx?.includes("loop") || sessionEffects.has("loop");
       if (hasLoop) {
         el.style.animation = `flow-loop ${duration}s linear infinite`;
-        // loop は animationend が来ないため別途タイマーで管理しない
-        // （セッション切断時に stage.innerHTML をクリアする想定）
       }
 
       applyEffectClasses(el, payload.msgCommands, payload.sessionFx);
 
-      // 矩形を登録
       activeRects.push({
         top:    topY,
         bottom: topY + elH,
@@ -433,38 +415,49 @@
       });
 
       console.log(
-        `[overlay] flow size=${size}(${vhToPx(sizeVh).toFixed(0)}px)`,
-        `elW=${elW}px elH=${elH}px top=${topY.toFixed(0)}px`,
-        `dur=${duration.toFixed(2)}s`,
+        `[overlay] flow size=${payload.size}(${vhToPx(SIZE_VH[payload.size ?? "medium"]).toFixed(0)}px)`,
+        `elW=${elW}px elH=${elH}px top=${topY.toFixed(0)}px dur=${duration.toFixed(2)}s`,
       );
     });
   }
 
   // ── 固定コメント ──────────────────────────────────
   /**
-   * 固定コメントのY座標を計算する
-   * スロットは動的に積み上げる（上固定は上から、下固定は下から）
-   * 大きい文字も含めて要素高さをベースに計算する
+   * 固定スロットの Y 座標を計算する
    *
-   * @param {"ue"|"shita"} side
-   * @param {HTMLElement} el
-   * @returns {number} topY (px)
+   * スロットは配列インデックス順に並ぶ（消えても詰めない）
+   * ue:    index 0 が最上段、index が増えるほど下へ
+   * shita: index 0 が最下段、index が増えるほど上へ
+   *
+   * 各スロットの高さは確定後に height として記録する
+   * 未確定スロット（null）はスキップして次のスロットへ
    */
-  function calcFixedTopY(side, el) {
-    const H    = window.innerHeight;
-    const elH  = el.offsetHeight || vhToPx(SIZE_VH.big) * 1.4; // 未確定時の概算
-
-    // 既存スロットの累積高さを計算
-    const slots     = fixedSlots[side];
-    const totalUsed = slots.reduce((sum, s) => sum + s.height + RECT_MARGIN, 0);
+  function calcFixedTopY(side, slotIndex, elH) {
+    const H     = window.innerHeight;
+    const slots = fixedSlots[side];
 
     if (side === "ue") {
-      // 上固定: 上から積み上げ
-      return totalUsed;
+      // 上固定: index 0 から下へ積み上げ
+      let offset = 0;
+      for (let i = 0; i < slotIndex; i++) {
+        if (slots[i]) {
+          offset += slots[i].height + RECT_MARGIN;
+        } else {
+          // 空きスロットは height 0 として扱う（詰めない）
+          // 空きは予約済みの高さを保持しない → そのスロットは skip
+        }
+      }
+      return offset;
     } else {
-      // 下固定: 下から積み上げ
-      // 要素の上端 = 画面下端 - 既存累積高さ - この要素の高さ
-      return H - totalUsed - elH;
+      // 下固定: index 0 から上へ積み上げ
+      let offset = 0;
+      for (let i = 0; i < slotIndex; i++) {
+        if (slots[i]) {
+          offset += slots[i].height + RECT_MARGIN;
+        }
+      }
+      // 下固定は画面下端 - offset - この要素の高さ
+      return H - offset - elH;
     }
   }
 
@@ -472,74 +465,51 @@
     const side  = payload.position; // "ue" | "shita"
     const slots = fixedSlots[side];
 
+    // 空きスロットを探す（null のインデックス）
+    let slotIndex = slots.findIndex((s) => s === null);
+
+    // 空きがなければ末尾に追加（FIXED_MAX_SLOTS を超えても許容）
+    if (slotIndex === -1) {
+      slotIndex = slots.length;
+      slots.push(null);
+    }
+
     const el     = document.createElement("div");
     el.className = "comment-fixed";
-    el.style.visibility = "hidden"; // レイアウト確定まで非表示
+    el.style.visibility = "hidden";
     el.appendChild(buildParts(payload, true));
     applyEffectClasses(el, payload.msgCommands, payload.sessionFx);
 
-    // 一旦追加して高さを確定
     stage.appendChild(el);
 
     requestAnimationFrame(() => {
       const elH  = el.offsetHeight;
-      const topY = calcFixedTopY(side, el);
+      const topY = calcFixedTopY(side, slotIndex, elH);
 
       el.style.top        = `${topY}px`;
       el.style.visibility = "visible";
 
       // スロットに記録
-      const slotEntry = { el, height: elH, timerId: null };
-      slots.push(slotEntry);
+      const entry = {
+        el,
+        height:  elH,
+        topY,
+        timerId: null,
+      };
+      slots[slotIndex] = entry;
 
       console.log(
-        `[overlay] fixed side=${side} slot=${slots.length - 1}`,
+        `[overlay] fixed side=${side} slot=${slotIndex}`,
         `top=${topY.toFixed(1)}px elH=${elH}px`,
       );
 
-      // 5秒後に削除
-      slotEntry.timerId = setTimeout(() => {
-        removeFixedSlot(side, slotEntry);
+      // ★ 個別タイマーで5秒後に消去（詰めない）
+      entry.timerId = setTimeout(() => {
+        el.remove();
+        slots[slotIndex] = null; // スロットを空きにする（位置は変えない）
+        console.log(`[overlay] fixed expired side=${side} slot=${slotIndex}`);
       }, FIXED_DISPLAY_MS);
     });
-  }
-
-  /**
-   * 固定スロットを削除し、残りのスロットのY座標を再計算する
-   * @param {"ue"|"shita"} side
-   * @param {object} targetEntry
-   */
-  function removeFixedSlot(side, targetEntry) {
-    const slots = fixedSlots[side];
-    const idx   = slots.indexOf(targetEntry);
-    if (idx === -1) return;
-
-    clearTimeout(targetEntry.timerId);
-    targetEntry.el.remove();
-    slots.splice(idx, 1);
-
-    // 残りスロットのY座標を再計算
-    repositionFixedSlots(side);
-  }
-
-  /**
-   * 固定スロット全体のY座標を再計算して更新する
-   * @param {"ue"|"shita"} side
-   */
-  function repositionFixedSlots(side) {
-    const H     = window.innerHeight;
-    const slots = fixedSlots[side];
-    let offset  = 0;
-
-    for (const entry of slots) {
-      const elH = entry.height;
-      const topY = side === "ue"
-        ? offset
-        : H - offset - elH;
-
-      entry.el.style.top = `${topY}px`;
-      offset += elH + RECT_MARGIN;
-    }
   }
 
 })();
