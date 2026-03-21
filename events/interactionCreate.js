@@ -1,4 +1,5 @@
 import { Events, MessageFlags } from "discord.js";
+import { BlacklistDB } from "../database.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -9,6 +10,14 @@ export const once  = false;
  */
 export async function execute(interaction, client) {
   if (!interaction.isChatInputCommand()) return;
+
+  // ── グローバルブラックリストチェック ──────────
+  if (BlacklistDB.has(interaction.user.id)) {
+    return interaction.reply({
+      content: "このBotを利用する権限がありません。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
 
   const command = client.commands.get(interaction.commandName);
 
@@ -24,13 +33,10 @@ export async function execute(interaction, client) {
     await command.execute(interaction);
   } catch (error) {
     console.error(`[interaction] /${interaction.commandName} 実行エラー:`, error);
-
     const payload = {
       content: "❌ コマンドの実行中にエラーが発生しました。",
       flags: MessageFlags.Ephemeral,
     };
-
-    // すでに返答済みかどうかで分岐
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp(payload);
     } else {

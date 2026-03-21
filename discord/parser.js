@@ -1,93 +1,144 @@
 import { StickerFormatType } from "discord.js";
 
 // ─────────────────────────────────────────────
-// 正規表現
+// 定数
 // ─────────────────────────────────────────────
 
-const RE_ANY_EMOJI     = /<(a?):([^:]+):(\d+)>/g;
-const RE_COMMAND       = /^\[([^\]]+)\]\s*/;
-const RE_HEADING       = /^(-#|#{1,3})\s*/;
+/**
+ * V2 メタデータブロック: ?attr1 attr2?
+ * 行のどこにあっても認識する（先頭・末尾・中間すべて対応）
+ */
+const RE_META_BLOCK = /\?([^?]+)\?\s*/;
 
-// s フラグ（dotAll）で改行をまたいだマッチに対応
+const RE_ANY_EMOJI     = /<(a?):([^:]+):(\d+)>/g;
+const RE_HEADING       = /^(-#|#{1,3})\s*/;
 const RE_BOLD          = /\*\*(.+?)\*\*/gs;
 const RE_ITALIC        = /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/gs;
 const RE_UNDERLINE     = /__(.+?)__/gs;
 const RE_STRIKETHROUGH = /~~(.+?)~~/gs;
 
 // ─────────────────────────────────────────────
-// マップ
+// カラーマップ
 // ─────────────────────────────────────────────
 
-const COLOR_MAP = {
-  赤: "#FF4040", red:    "#FF4040",
-  青: "#4488FF", blue:   "#4488FF",
-  黄: "#FFE133", yellow: "#FFE133",
-  緑: "#33DD44", green:  "#33DD44",
-  白: "#FFFFFF", white:  "#FFFFFF",
+const NAMED_COLORS = {
+  white:  "#FFFFFF",
+  red:    "#FF4040",
+  pink:   "#FF80C0",
+  yellow: "#FFE133",
+  orange: "#FF9933",
+  green:  "#33DD44",
+  cyan:   "#33DDFF",
+  blue:   "#4488FF",
+  purple: "#AA44FF",
+  black:  "#111111",
 };
 
-const POSITION_MAP = {
-  上: "top",    ue:     "top",    top:    "top",
-  下: "bottom", sita:   "bottom", bottom: "bottom",
+const HEADING_SIZE_MAP = {
+  "#":   "big",
+  "##":  "medium",
+  "###": "medium",
+  "-#":  "small",
 };
 
-const HEADING_MAP = {
-  "-#": "hs",
-  "#":  "h1",
-  "##": "h2",
-  "###":"h3",
-};
+/** セッションエフェクト（/secret コマンド用） */
+const SESSION_EFFECTS = new Set(["gaming", "reverse", "loop"]);
+
+/**
+ * メッセージ単位の隠しコマンド（? ? 内に記述）
+ * セッション蓄積ではなくそのメッセージのみに適用
+ */
+const MSG_COMMANDS = new Set([
+  "invisible",   // コメントを非表示
+  "full",        // 臨界幅変更
+  "patissier",   // 保持数条件変更
+  "ender",       // 改行リサイズ無効
+  "_live",       // 半透過
+  "ca",          // ニコる残存回避
+]);
 
 // ─────────────────────────────────────────────
-// メタ情報抽出（順不同・完全対応）
+// V2 メタブロックパーサー
 // ─────────────────────────────────────────────
 
-function extractMeta(raw) {
-  let text     = raw.trimStart();
-  let color    = null;
-  let position = null;
-  let heading  = null;
+/**
+ * テキスト内の `?attr1 attr2?` を行のどこからでも抽出して解析する
+ * メタブロックはテキストから除去される
+ *
+ * @param {string} raw
+ * @returns {{
+ *   color:       string|null,
+ *   size:        "big"|"medium"|"small"|null,
+ *   position:    "ue"|"shita"|null,
+ *   sessionFx:   string[],   // gaming/reverse/loop
+ *   msgCommands: string[],   // invisible/full/patissier/ender/_live/ca
+ *   cleaned:     string
+ * }}
+ */
+function parseMetaBlock(raw) {
+  let color       = null;
+  let size        = null;
+  let position    = null;
+  const sessionFx   = [];
+  const msgCommands = [];
 
-  let progress = true;
-  while (progress) {
-    progress = false;
+  // テキスト全体からメタブロックを全て抽出（複数対応）
+  let cleaned = raw.replace(RE_META_BLOCK, (_, attrsRaw) => {
+    const attrs = attrsRaw.trim().toLowerCase().split(/\s+/);
 
-    // 角括弧コマンドの試行
-    const cmdMatch = RE_COMMAND.exec(text);
-    if (cmdMatch) {
-      const key = cmdMatch[1].toLowerCase().trim();
-      if (!color    && COLOR_MAP[key]    !== undefined) {
-        color    = COLOR_MAP[key];
-        text     = text.slice(cmdMatch[0].length);
-        progress = true;
-        RE_COMMAND.lastIndex = 0;
+    for (const attr of attrs) {
+      if (NAMED_COLORS[attr] !== undefined) {
+        color = NAMED_COLORS[attr];
         continue;
       }
-      if (!position && POSITION_MAP[key] !== undefined) {
-        position = POSITION_MAP[key];
-        text     = text.slice(cmdMatch[0].length);
-        progress = true;
-        RE_COMMAND.lastIndex = 0;
+      if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/.test(attr)) {
+        color = attr;
         continue;
+      }
+      if (attr === "big" || attr === "medium" || attr === "small") {
+        size = attr;
+        continue;
+      }
+      if (attr === "ue")    { position = "ue";    continue; }
+      if (attr === "shita") { position = "shita"; continue; }
+      if (SESSION_EFFECTS.has(attr)) {
+        sessionFx.push(attr);
+        continue;
+      }
+      // メッセージ単位コマンド（_live は先頭全角スペース付きで来る場合もある）
+      const normalizedAttr = attr.replace(/^\u3000/, "_live"); // 全角スペース→_live
+      if (MSG_COMMANDS.has(normalizedAttr)) {
+        msgCommands.push(normalizedAttr);
+        continue;
+      }
+      if (MSG_COMMANDS.has(attr)) {
+        msgCommands.push(attr);
       }
     }
-    RE_COMMAND.lastIndex = 0;
+    return ""; // ブロック自体を除去
+  });
 
-    // 見出し記号の試行
-    if (!heading) {
-      const hMatch = RE_HEADING.exec(text);
-      if (hMatch) {
-        heading  = HEADING_MAP[hMatch[1]] ?? null;
-        text     = text.slice(hMatch[0].length);
-        progress = true;
-        RE_HEADING.lastIndex = 0;
-        continue;
-      }
-      RE_HEADING.lastIndex = 0;
-    }
-  }
+  return {
+    color,
+    size,
+    position,
+    sessionFx,
+    msgCommands,
+    cleaned: cleaned.trim(),
+  };
+}
 
-  return { color, position, heading, cleaned: text.trimStart() };
+// ─────────────────────────────────────────────
+// 見出しからサイズ推測
+// ─────────────────────────────────────────────
+
+function extractHeadingSize(text) {
+  const m = RE_HEADING.exec(text);
+  if (!m) return { size: null, cleaned: text };
+  return {
+    size:    HEADING_SIZE_MAP[m[1]] ?? null,
+    cleaned: text.slice(m[0].length).trimStart(),
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -122,7 +173,7 @@ function extractInlineStyles(text) {
 }
 
 // ─────────────────────────────────────────────
-// テキストセグメント
+// テキストセグメント分割
 // ─────────────────────────────────────────────
 
 function parseTextSegments(text) {
@@ -170,15 +221,12 @@ function parseStickerParts(stickers) {
 }
 
 // ─────────────────────────────────────────────
-// 文字数カウント（改行は0文字扱い）
+// 文字数カウント
 // ─────────────────────────────────────────────
 
 export function countChars(parts) {
   return parts.reduce((acc, part) => {
-    if (part.type === "text") {
-      // 改行を除いた実文字数をカウント
-      return acc + [...part.content.replace(/\n/g, "")].length;
-    }
+    if (part.type === "text")    return acc + [...part.content.replace(/\n/g, "")].length;
     if (part.type === "emoji")   return acc + 1;
     if (part.type === "sticker") return acc + 10;
     return acc;
@@ -193,44 +241,72 @@ export function parseMessage(message, watchChannelIds) {
   if (message.author.bot) return null;
   if (!watchChannelIds.includes(message.channelId)) return null;
 
+  // スタンプ専用
   if (message.stickers.size > 0) {
     const parts = parseStickerParts(message.stickers);
     if (parts.length === 0) return null;
     return {
-      t:         message.createdTimestamp,
-      a:         message.member?.displayName ?? message.author.username,
-      av:        message.author.displayAvatarURL({ size: 64, extension: "webp" }),
-      color:     null,
-      position:  null,
-      heading:   null,
-      styles:    { bold: false, italic: false, underline: false, strikethrough: false },
-      p:         parts,
-      charCount: countChars(parts),
+      t:           message.createdTimestamp,
+      a:           message.member?.displayName ?? message.author.username,
+      av:          message.author.displayAvatarURL({ size: 64, extension: "webp" }),
+      color:       null,
+      size:        "medium",
+      position:    null,
+      sessionFx:   [],
+      msgCommands: [],
+      styles:      { bold: false, italic: false, underline: false, strikethrough: false },
+      p:           parts,
+      charCount:   countChars(parts),
     };
   }
 
   const rawContent = message.content;
   if (!rawContent.trim()) return null;
 
-  const { color, position, heading, cleaned: afterMeta } = extractMeta(rawContent);
+  // ── メタブロック解析（位置不問） ──────────────
+  const {
+    color,
+    size:        metaSize,
+    position,
+    sessionFx,
+    msgCommands,
+    cleaned:     afterMeta,
+  } = parseMetaBlock(rawContent);
 
-  console.log(`[parser] color=${color} pos=${position} heading=${heading} cleaned="${afterMeta}"`);
+  // ── 見出しからサイズ推測（メタ指定優先） ──────
+  let size        = metaSize;
+  let afterHeading = afterMeta;
+  if (!size) {
+    const h  = extractHeadingSize(afterMeta);
+    size         = h.size ?? "medium";
+    afterHeading = h.cleaned;
+  }
 
+  // ── インライン書式 ────────────────────────────
   const { bold, italic, underline, strikethrough, cleaned: afterStyles } =
-    extractInlineStyles(afterMeta);
+    extractInlineStyles(afterHeading);
 
+  // ── テキスト分割 ──────────────────────────────
   const parts = parseTextSegments(afterStyles);
   if (parts.length === 0) return null;
 
+  console.log(
+    `[parser] color=${color} size=${size} pos=${position}`,
+    `sessionFx=[${sessionFx}] msgCmds=[${msgCommands}]`,
+    `cleaned="${afterStyles.replace(/\n/g, "\\n")}"`,
+  );
+
   return {
-    t:         message.createdTimestamp,
-    a:         message.member?.displayName ?? message.author.username,
-    av:        message.author.displayAvatarURL({ size: 64, extension: "webp" }),
+    t:           message.createdTimestamp,
+    a:           message.member?.displayName ?? message.author.username,
+    av:          message.author.displayAvatarURL({ size: 64, extension: "webp" }),
     color,
+    size,
     position,
-    heading,
-    styles:    { bold, italic, underline, strikethrough },
-    p:         parts,
-    charCount: countChars(parts),
+    sessionFx,
+    msgCommands,
+    styles:      { bold, italic, underline, strikethrough },
+    p:           parts,
+    charCount:   countChars(parts),
   };
 }
