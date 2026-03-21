@@ -30,7 +30,7 @@ export const data = new SlashCommandBuilder()
   );
 
 /** 有効なセッションエフェクト一覧（非公開） */
-const VALID_EFFECTS = new Set(["gaming", "reverse", "loop"]);
+const VALID_EFFECTS = new Set(["gaming", "reverse"]);
 
 export async function execute(interaction) {
   // ── ブラックリストチェック ────────────────────

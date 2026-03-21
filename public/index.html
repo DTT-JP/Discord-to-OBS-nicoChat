@@ -97,7 +97,18 @@
       transform: translateX(-50%);
     }
 
-    /* ── エフェクト: gaming ── */
+    /* ── エフェクト: gaming ──────────────────────────
+     *
+     * インラインスタイル（style="color:#fff"）は
+     * CSSクラスより優先度が高いため !important だけでは勝てない。
+     *
+     * 対策:
+     *   JS 側で gaming が有効な span には color をセットしない。
+     *   CSS 側は animation のみを担当する。
+     *
+     * .effect-gaming .text-part に対して
+     * animation を直接指定することでアニメーションを適用する。
+     * ─────────────────────────────────────────────── */
     @keyframes gaming-color {
       0%   { color: #ff0000; }
       14%  { color: #ff8800; }
@@ -109,9 +120,13 @@
       100% { color: #ff0000; }
     }
 
+    /*
+     * ★ color: unset / inherit は削除
+     *    インラインの color を JS 側でセットしないことで解決する
+     *    （color の宣言がなければ CSS アニメーションが有効になる）
+     */
     .effect-gaming .text-part {
       animation: gaming-color 1.5s linear infinite !important;
-      color: unset !important;
     }
 
     /* ── エフェクト: _live（半透過） ── */
