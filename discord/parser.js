@@ -305,13 +305,6 @@ export function parseMessage(message, watchChannelIds) {
   const parts = parseTextSegments(afterStyles);
   if (parts.length === 0) return null;
 
-  // ★ 送信前に全フィールドをログ出力（軽量）
-  console.log(
-    `[parser] size="${size}" pos="${position}" color="${color}"`,
-    `sessionFx=[${sessionFx}] msgCmds=[${msgCommands}]`,
-    `text="${afterStyles.slice(0, 40).replace(/\n/g, "\\n")}"`,
-  );
-
   return {
     t:           message.createdTimestamp,
     a:           message.member?.displayName ?? message.author.username,
