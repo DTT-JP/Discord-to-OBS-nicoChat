@@ -1,4 +1,4 @@
-# Discord OBS Overlay
+# Discord-to-OBS-nicoChat
 
 > Discordのチャンネルをニコニコ動画風コメントでOBSにリアルタイム配信するBot
 
@@ -107,7 +107,7 @@ cp .env.example .env
 
 ```env
 # ═══════════════════════════════════════════════
-# Discord OBS Overlay — 環境変数設定ファイル
+# Discord-to-OBS-nicoChat — 環境変数設定ファイル
 # ═══════════════════════════════════════════════
 
 # ── Discord 認証情報 ──────────────────────────────
