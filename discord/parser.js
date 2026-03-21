@@ -1,4 +1,3 @@
-discord/parser.js
 import { StickerFormatType } from "discord.js";
 
 // ─────────────────────────────────────────────
