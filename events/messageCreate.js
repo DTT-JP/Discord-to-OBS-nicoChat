@@ -33,6 +33,9 @@ export async function execute(message) {
   const payload = parseMessage(message, watchChannelIds);
   if (!payload) return;
 
+  // デバッグ用
+  console.log("[debug] payload:", JSON.stringify(payload));
+
   // 該当チャンネルを監視しているセッションへブロードキャスト
   broadcastFn(message.channelId, payload);
 }
