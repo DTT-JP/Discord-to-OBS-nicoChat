@@ -8,21 +8,15 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
-      width: 100%; height: 100%;
+      width: 100%;
+      height: 100%;
       overflow: hidden;
       background: transparent;
-      /* ニコニコ標準フォントスタック */
       font-family:
-        "MS P Gothic",
-        "MS PGothic",
-        "Mona",
-        "IPA Pゴシック",
-        "IPA PGothic",
-        "Mplus 1p",
+        "MS P Gothic", "MS PGothic", "Mona",
+        "IPA Pゴシック", "IPA PGothic", "Mplus 1p",
         "Hiragino Kaku Gothic ProN",
-        "Apple Color Emoji",
-        "Segoe UI Emoji",
-        "Noto Color Emoji",
+        "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
         sans-serif;
     }
 
@@ -69,45 +63,38 @@
     #auth-screen p      { font-size: clamp(0.7rem, 2vw, 0.9rem); color: #aaa; text-align: center; line-height: 1.6; }
     #auth-screen .error { color: #ed4245; font-size: clamp(0.8rem, 2.5vw, 1rem); }
 
-    /* ── テキストサイズ（JS で直接 font-size を設定するため CSS は補助） ── */
-    .text-part {
-      color: #ffffff;
-      font-weight: 500;
-      /* font-size は JS で vh 単位を直接 style に設定 */
-    }
-
-    /* ── 流れるコメント ── */
-    .comment {
+    /* ── コメント共通 ── */
+    .comment,
+    .comment-fixed {
       position: absolute;
-      left: 100vw;
       pointer-events: none;
       display: inline-flex;
       flex-direction: column;
       align-items: flex-start;
       line-height: 1.3;
       text-shadow:
-        -1px -1px 0 rgba(0,0,0,0.9),  1px -1px 0 rgba(0,0,0,0.9),
-        -1px  1px 0 rgba(0,0,0,0.9),   1px  1px 0 rgba(0,0,0,0.9),
+        -1px -1px 0 rgba(0,0,0,0.9),
+         1px -1px 0 rgba(0,0,0,0.9),
+        -1px  1px 0 rgba(0,0,0,0.9),
+         1px  1px 0 rgba(0,0,0,0.9),
          0    2px 6px rgba(0,0,0,0.7);
-      animation: flow var(--duration, 5s) linear forwards;
+    }
+
+    /* ── 流れるコメント ── */
+    .comment {
+      left: 100vw;
+      white-space: nowrap;
+      animation: flow var(--duration, 6s) linear forwards;
       will-change: transform;
     }
 
     /* ── 固定コメント ── */
     .comment-fixed {
-      position: absolute;
+      white-space: nowrap;
+      align-items: center;
+      text-align: center;
       left: 50%;
       transform: translateX(-50%);
-      pointer-events: none;
-      display: inline-flex;
-      flex-direction: column;
-      align-items: center;
-      line-height: 1.3;
-      text-align: center;
-      text-shadow:
-        -1px -1px 0 rgba(0,0,0,0.9),  1px -1px 0 rgba(0,0,0,0.9),
-        -1px  1px 0 rgba(0,0,0,0.9),   1px  1px 0 rgba(0,0,0,0.9),
-         0    2px 6px rgba(0,0,0,0.7);
     }
 
     /* ── エフェクト: gaming ── */
@@ -121,8 +108,10 @@
       85%  { color: #aa00ff; }
       100% { color: #ff0000; }
     }
+
     .effect-gaming .text-part {
       animation: gaming-color 1.5s linear infinite !important;
+      color: unset !important;
     }
 
     /* ── エフェクト: _live（半透過） ── */
@@ -139,8 +128,9 @@
       from { transform: translateX(0); }
       to   { transform: translateX(calc(-1 * var(--distance, 200vw))); }
     }
+
     .effect-loop {
-      animation: flow-loop var(--duration, 5s) linear infinite !important;
+      animation: flow-loop var(--duration, 6s) linear infinite !important;
     }
   </style>
 </head>
@@ -153,7 +143,9 @@
       <strong>/auth [上記の6桁コード]</strong>
     </p>
   </div>
+
   <div id="stage"></div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="/script.js"></script>
 </body>
