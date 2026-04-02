@@ -1,6 +1,7 @@
 import {
   SlashCommandBuilder,
   EmbedBuilder,
+  PermissionFlagsBits,
   MessageFlags,
   ChannelType,
 } from "discord.js";
@@ -28,6 +29,7 @@ export const data = new SlashCommandBuilder()
       .setDescription("禁止チャンネルから削除")
       .addChannelOption((opt) => opt.setName("channel").setDescription("対象チャンネル").addChannelTypes(ChannelType.GuildText).setRequired(true)),
   )
+  .addSubcommand((sub) => sub.setName("deny_channel_list").setDescription("禁止チャンネル一覧を表示"))
   .addSubcommand((sub) =>
     sub
       .setName("set_blacklist_status")
