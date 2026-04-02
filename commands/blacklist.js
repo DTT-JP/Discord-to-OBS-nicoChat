@@ -22,8 +22,6 @@ export const data = new SlashCommandBuilder()
     sub
       .setName("add")
       .setDescription("ユーザーをこのサーバーのブラックリストに追加します")
-      .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー（@メンション）").setRequired(false))
-      .addStringOption((opt) => opt.setName("user_id").setDescription("対象ユーザーID").setRequired(false))
       .addStringOption((opt) => opt.setName("reason").setDescription("理由").setRequired(true))
       .addStringOption((opt) =>
         opt.setName("duration_type").setDescription("期間種別").setRequired(true)
@@ -37,6 +35,8 @@ export const data = new SlashCommandBuilder()
             { name: "無制限", value: "unlimited" },
           ),
       )
+      .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー（@メンション）").setRequired(false))
+      .addStringOption((opt) => opt.setName("user_id").setDescription("対象ユーザーID").setRequired(false))
       .addIntegerOption((opt) => opt.setName("duration_value").setDescription("期間の数値（無制限以外で必須）").setRequired(false).setMinValue(1)),
   )
   .addSubcommand((sub) =>
