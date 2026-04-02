@@ -2,4 +2,4 @@
  * アプリケーションバージョン
  * ここを書き換えることで /status コマンドに反映される
  */
-export const VERSION = "1.2.1-dev-2";
+export const VERSION = "1.2.1";
