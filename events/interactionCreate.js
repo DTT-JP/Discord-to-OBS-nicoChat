@@ -1,5 +1,5 @@
 import { Events, MessageFlags } from "discord.js";
-import { BlacklistDB } from "../database.js";
+import { GlobalBlacklistDB } from "../database.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -12,7 +12,8 @@ export async function execute(interaction, client) {
   if (!interaction.isChatInputCommand()) return;
 
   // ── グローバルブラックリストチェック ──────────
-  if (BlacklistDB.has(interaction.user.id)) {
+  // コマンド実行自体を遮断する（ローカルBLはコマンドは許可・OBSのみ遮断）
+  if (GlobalBlacklistDB.has(interaction.user.id)) {
     return interaction.reply({
       content: "このBotを利用する権限がありません。",
       flags: MessageFlags.Ephemeral,

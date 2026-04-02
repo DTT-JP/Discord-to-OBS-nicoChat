@@ -1,5 +1,5 @@
 import { Events } from "discord.js";
-import { ActiveSessionDB } from "../database.js";
+import { ActiveSessionDB, GlobalBlacklistDB, LocalBlacklistDB } from "../database.js";
 import { parseMessage } from "../discord/parser.js";
 
 export const name  = Events.MessageCreate;
@@ -23,6 +23,15 @@ export function setBroadcastFn(fn) {
 export async function execute(message) {
   if (!broadcastFn) return;
 
+  // ── グローバルブラックリストチェック ──────────
+  // 全サーバー共通でOBSへの表示を遮断する
+  if (GlobalBlacklistDB.has(message.author.id)) return;
+
+  // ── ローカルブラックリストチェック ────────────
+  // そのサーバー内でブロックされているユーザーはOBSに流さない
+  const guildId = message.guildId;
+  if (guildId && LocalBlacklistDB.has(message.author.id, guildId)) return;
+
   // 現在アクティブなセッションの監視チャンネルID一覧を取得
   const sessions        = ActiveSessionDB.findAll();
   const watchChannelIds = [...new Set(sessions.map((s) => s.channel_id))];
@@ -32,7 +41,7 @@ export async function execute(message) {
   // パーサーに渡す（フィルタリングはparser内部で行う）
   const payload = parseMessage(message, watchChannelIds);
   if (!payload) return;
-  
+
   // 該当チャンネルを監視しているセッションへブロードキャスト
   broadcastFn(message.channelId, payload);
 }
