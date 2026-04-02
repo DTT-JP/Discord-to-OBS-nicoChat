@@ -7,6 +7,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH   = join(__dirname, "db.json");
 
 /** @typedef {{ type: "role"|"user", id: string, guild_id: string }} Principal */
+/** @typedef {{ type: "role"|"user", id: string, guild_id: string }} SetupPrincipal */
+/** @typedef {{ guild_id: string, channel_id: string, added_by: string, added_at: number }} DenyChannel */
+/** @typedef {{ guild_id: string, blacklist_status_enabled: boolean, blacklist_appeal_url: string }} GuildSetting */
 
 /**
  * @typedef {Object} PendingAuth
@@ -37,6 +40,9 @@ const DB_PATH   = join(__dirname, "db.json");
  * @property {string} user_id   - ブラックリスト対象のDiscordユーザーID
  * @property {string} added_by  - 追加したユーザーのID
  * @property {number} added_at  - 追加日時（Unix ms）
+ * @property {string} reason    - 追加理由
+ * @property {number|null} expires_at - 期限（Unix ms）null は無期限
+ * @property {string} added_in_guild_id - 施行サーバー
  */
 
 /**
@@ -45,6 +51,8 @@ const DB_PATH   = join(__dirname, "db.json");
  * @property {string} guild_id  - 対象のサーバーID
  * @property {string} added_by  - 追加したユーザーのID
  * @property {number} added_at  - 追加日時（Unix ms）
+ * @property {string} reason    - 追加理由
+ * @property {number|null} expires_at - 期限（Unix ms）null は無期限
  */
 
 /**
@@ -52,6 +60,9 @@ const DB_PATH   = join(__dirname, "db.json");
  * @property {PendingAuth[]}          pending_auths
  * @property {ActiveSession[]}        active_sessions
  * @property {Principal[]}            allowed_principals
+ * @property {SetupPrincipal[]}       setup_principals
+ * @property {DenyChannel[]}          deny_channels
+ * @property {GuildSetting[]}         guild_settings
  * @property {GlobalBlacklistEntry[]} global_blacklist
  * @property {LocalBlacklistEntry[]}  local_blacklist
  */
@@ -61,6 +72,9 @@ const DEFAULT_DATA = {
   pending_auths:      [],
   active_sessions:    [],
   allowed_principals: [],
+  setup_principals:   [],
+  deny_channels:      [],
+  guild_settings:     [],
   global_blacklist:   [],
   local_blacklist:    [],
 };
@@ -84,6 +98,18 @@ if (db.data.blacklist && !db.data.global_blacklist?.length) {
 
 if (!db.data.local_blacklist) {
   db.data.local_blacklist = [];
+  await db.write();
+}
+if (!db.data.setup_principals) {
+  db.data.setup_principals = [];
+  await db.write();
+}
+if (!db.data.deny_channels) {
+  db.data.deny_channels = [];
+  await db.write();
+}
+if (!db.data.guild_settings) {
+  db.data.guild_settings = [];
   await db.write();
 }
 
@@ -244,6 +270,89 @@ export const AllowedPrincipalDB = {
   },
 };
 
+export const SetupPrincipalDB = {
+  add(type, id, guildId) {
+    const exists = db.data.setup_principals.some(
+      (p) => p.type === type && p.id === id && p.guild_id === guildId,
+    );
+    if (exists) return Promise.resolve();
+    db.data.setup_principals.push({ type, id, guild_id: guildId });
+    return db.write();
+  },
+  remove(type, id, guildId) {
+    db.data.setup_principals = db.data.setup_principals.filter(
+      (p) => !(p.type === type && p.id === id && p.guild_id === guildId),
+    );
+    return db.write();
+  },
+  findByGuild(guildId) {
+    return db.data.setup_principals.filter((p) => p.guild_id === guildId);
+  },
+  isAllowed(member) {
+    const guildId = member.guild.id;
+    const principals = db.data.setup_principals.filter((p) => p.guild_id === guildId);
+    for (const p of principals) {
+      if (p.type === "user" && p.id === member.id) return true;
+      if (p.type === "role" && member.roles.cache.has(p.id)) return true;
+    }
+    return false;
+  },
+};
+
+export const DenyChannelDB = {
+  add(guildId, channelId, addedBy) {
+    const exists = db.data.deny_channels.some(
+      (e) => e.guild_id === guildId && e.channel_id === channelId,
+    );
+    if (exists) return Promise.resolve(false);
+    db.data.deny_channels.push({
+      guild_id: guildId,
+      channel_id: channelId,
+      added_by: addedBy,
+      added_at: Date.now(),
+    });
+    return db.write().then(() => true);
+  },
+  remove(guildId, channelId) {
+    const before = db.data.deny_channels.length;
+    db.data.deny_channels = db.data.deny_channels.filter(
+      (e) => !(e.guild_id === guildId && e.channel_id === channelId),
+    );
+    if (db.data.deny_channels.length === before) return Promise.resolve(false);
+    return db.write().then(() => true);
+  },
+  has(guildId, channelId) {
+    return db.data.deny_channels.some(
+      (e) => e.guild_id === guildId && e.channel_id === channelId,
+    );
+  },
+  findByGuild(guildId) {
+    return db.data.deny_channels.filter((e) => e.guild_id === guildId);
+  },
+};
+
+export const GuildSettingDB = {
+  find(guildId) {
+    return db.data.guild_settings.find((s) => s.guild_id === guildId)
+      ?? { guild_id: guildId, blacklist_status_enabled: false, blacklist_appeal_url: "" };
+  },
+  async upsert(guildId, patch) {
+    const existing = db.data.guild_settings.find((s) => s.guild_id === guildId);
+    if (existing) {
+      Object.assign(existing, patch);
+    } else {
+      db.data.guild_settings.push({
+        guild_id: guildId,
+        blacklist_status_enabled: false,
+        blacklist_appeal_url: "",
+        ...patch,
+      });
+    }
+    await db.write();
+    return this.find(guildId);
+  },
+};
+
 // ─────────────────────────────────────────────
 // GlobalBlacklist CRUD（全サーバー共通）
 // ─────────────────────────────────────────────
@@ -255,10 +364,17 @@ export const GlobalBlacklistDB = {
    * @param {string} addedBy
    * @returns {Promise<boolean>} 追加できたら true
    */
-  add(userId, addedBy) {
+  add(userId, addedBy, reason = "", expiresAt = null, addedInGuildId = "") {
     const exists = db.data.global_blacklist.some((e) => e.user_id === userId);
     if (exists) return Promise.resolve(false);
-    db.data.global_blacklist.push({ user_id: userId, added_by: addedBy, added_at: Date.now() });
+    db.data.global_blacklist.push({
+      user_id: userId,
+      added_by: addedBy,
+      added_at: Date.now(),
+      reason,
+      expires_at: expiresAt,
+      added_in_guild_id: addedInGuildId,
+    });
     return db.write().then(() => true);
   },
 
@@ -278,12 +394,22 @@ export const GlobalBlacklistDB = {
    * @returns {boolean}
    */
   has(userId) {
-    return db.data.global_blacklist.some((e) => e.user_id === userId);
+    const now = Date.now();
+    return db.data.global_blacklist.some((e) => (
+      e.user_id === userId && (e.expires_at == null || e.expires_at > now)
+    ));
   },
 
   /** @returns {GlobalBlacklistEntry[]} */
   findAll() {
-    return [...db.data.global_blacklist];
+    const now = Date.now();
+    return db.data.global_blacklist.filter((e) => e.expires_at == null || e.expires_at > now);
+  },
+  find(userId) {
+    const now = Date.now();
+    return db.data.global_blacklist.find((e) => (
+      e.user_id === userId && (e.expires_at == null || e.expires_at > now)
+    ));
   },
 };
 
@@ -299,12 +425,19 @@ export const LocalBlacklistDB = {
    * @param {string} addedBy
    * @returns {Promise<boolean>}
    */
-  add(userId, guildId, addedBy) {
+  add(userId, guildId, addedBy, reason = "", expiresAt = null) {
     const exists = db.data.local_blacklist.some(
       (e) => e.user_id === userId && e.guild_id === guildId,
     );
     if (exists) return Promise.resolve(false);
-    db.data.local_blacklist.push({ user_id: userId, guild_id: guildId, added_by: addedBy, added_at: Date.now() });
+    db.data.local_blacklist.push({
+      user_id: userId,
+      guild_id: guildId,
+      added_by: addedBy,
+      added_at: Date.now(),
+      reason,
+      expires_at: expiresAt,
+    });
     return db.write().then(() => true);
   },
 
@@ -329,9 +462,10 @@ export const LocalBlacklistDB = {
    * @returns {boolean}
    */
   has(userId, guildId) {
-    return db.data.local_blacklist.some(
-      (e) => e.user_id === userId && e.guild_id === guildId,
-    );
+    const now = Date.now();
+    return db.data.local_blacklist.some((e) => (
+      e.user_id === userId && e.guild_id === guildId && (e.expires_at == null || e.expires_at > now)
+    ));
   },
 
   /**
@@ -340,7 +474,16 @@ export const LocalBlacklistDB = {
    * @returns {LocalBlacklistEntry[]}
    */
   findByGuild(guildId) {
-    return db.data.local_blacklist.filter((e) => e.guild_id === guildId);
+    const now = Date.now();
+    return db.data.local_blacklist.filter((e) => (
+      e.guild_id === guildId && (e.expires_at == null || e.expires_at > now)
+    ));
+  },
+  find(userId, guildId) {
+    const now = Date.now();
+    return db.data.local_blacklist.find((e) => (
+      e.user_id === userId && e.guild_id === guildId && (e.expires_at == null || e.expires_at > now)
+    ));
   },
 };
 
