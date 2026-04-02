@@ -131,7 +131,7 @@ PUBLIC_URL=
 # ── CORS設定 ──────────────────────────────────────
 # Socket.io への接続を許可するオリジンをカンマ区切りで設定
 # OBSブラウザソース（null origin）は常に許可されます
-# 未設定の場合は null origin（OBSブラウザ）のみ許可
+# 未設定時はローカル開発向けに localhost / 127.0.0.1 も許可されます
 # 例: ALLOWED_ORIGINS=https://overlay.example.com,https://obs.example.com
 ALLOWED_ORIGINS=
 
@@ -153,7 +153,7 @@ CODE_EXPIRE_MINUTES=10
 | `PORT` | ✅ | Expressサーバーのポート番号（デフォルト: 3000） |
 | `HOST` | ✅ | URLの生成に使うホスト名（`PUBLIC_URL` 設定時は参照されない） |
 | `PUBLIC_URL` | — | HTTPS公開時に設定。設定すると `http://HOST:PORT` より優先 |
-| `ALLOWED_ORIGINS` | — | Socket.io の CORS 許可オリジン（カンマ区切り）。未設定時はOBSブラウザ（null origin）のみ許可 |
+| `ALLOWED_ORIGINS` | — | Socket.io の CORS 許可オリジン（カンマ区切り）。未設定時は OBSブラウザ（null origin）に加えて localhost / 127.0.0.1 も許可 |
 | `MAX_COMMENTS` | ✅ | 同時表示コメントのデフォルト上限数（デフォルト: 30） |
 | `CODE_EXPIRE_MINUTES` | ✅ | 認証コードの有効期限（分、デフォルト: 10） |
 
