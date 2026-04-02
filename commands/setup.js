@@ -1,113 +1,114 @@
 import {
   SlashCommandBuilder,
-  PermissionFlagsBits,
   EmbedBuilder,
+  PermissionFlagsBits,
   MessageFlags,
+  ChannelType,
 } from "discord.js";
-import { AllowedPrincipalDB } from "../database.js";
+import { DenyChannelDB, GuildSettingDB, LocalBlacklistDB, SetupPrincipalDB } from "../database.js";
+import { isAdminOrOwner, formatDateTime, formatRemaining } from "../utils/moderation.js";
 
-/**
- * サーバーオーナーまたは管理者権限を持つか判定
- * @param {import("discord.js").Interaction} interaction
- * @returns {boolean}
- */
-function isAdminOrOwner(interaction) {
-  if (interaction.user.id === interaction.guild.ownerId) return true;
-  return interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false;
+function canManageSetup(interaction) {
+  if (isAdminOrOwner(interaction)) return true;
+  return SetupPrincipalDB.isAllowed(interaction.member);
 }
 
 export const data = new SlashCommandBuilder()
   .setName("setup")
-  .setDescription("Botの設定を管理します（サーバーオーナー・管理者専用）")
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .setDescription("/setup 関連設定")
   .addSubcommand((sub) =>
     sub
-      .setName("allow_role")
-      .setDescription("/start を許可するロールを追加します")
-      .addRoleOption((opt) =>
-        opt.setName("role").setDescription("許可するロール").setRequired(true),
-      ),
+      .setName("add_deny_channel")
+      .setDescription("/start で指定禁止のチャンネルを追加")
+      .addChannelOption((opt) => opt.setName("channel").setDescription("対象チャンネル").addChannelTypes(ChannelType.GuildText).setRequired(true)),
+  )
+  .addSubcommand((sub) => sub.setName("deny_channel_list").setDescription("禁止チャンネル一覧を表示"))
+  .addSubcommand((sub) =>
+    sub
+      .setName("del_deny_channel_list")
+      .setDescription("禁止チャンネルから削除")
+      .addChannelOption((opt) => opt.setName("channel").setDescription("対象チャンネル").addChannelTypes(ChannelType.GuildText).setRequired(true)),
   )
   .addSubcommand((sub) =>
     sub
-      .setName("remove_role")
-      .setDescription("/start の許可ロールを削除します")
-      .addRoleOption((opt) =>
-        opt.setName("role").setDescription("削除するロール").setRequired(true),
-      ),
+      .setName("set_blacklist_status")
+      .setDescription("サーバーブラックリスト照会コマンドの可否/URLを設定")
+      .addBooleanOption((opt) => opt.setName("enabled").setDescription("有効にするか").setRequired(true))
+      .addStringOption((opt) => opt.setName("appeal_url").setDescription("異議申し立て先URL（enabled=true時推奨）").setRequired(false)),
   )
-  .addSubcommand((sub) =>
-    sub
-      .setName("allow_user")
-      .setDescription("/start を許可するユーザーを追加します")
-      .addUserOption((opt) =>
-        opt.setName("user").setDescription("許可するユーザー").setRequired(true),
-      ),
-  )
-  .addSubcommand((sub) =>
-    sub
-      .setName("remove_user")
-      .setDescription("/start の許可ユーザーを削除します")
-      .addUserOption((opt) =>
-        opt.setName("user").setDescription("削除するユーザー").setRequired(true),
-      ),
-  )
-  .addSubcommand((sub) =>
-    sub.setName("list").setDescription("現在の許可リストを表示します"),
-  );
+  .addSubcommand((sub) => sub.setName("blacklist_status").setDescription("自分がサーバーブラックリストか確認"));
 
 export async function execute(interaction) {
-  if (!isAdminOrOwner(interaction)) {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "blacklist_status") {
+    const setting = GuildSettingDB.find(interaction.guild.id);
+    if (!setting.blacklist_status_enabled) {
+      return interaction.reply({ content: "このサーバーではこのコマンドは使用できません", flags: MessageFlags.Ephemeral });
+    }
+
+    const entry = LocalBlacklistDB.find(interaction.user.id, interaction.guild.id);
+    if (!entry) {
+      return interaction.reply({ content: "あなたはブラックリストに登録されていません", flags: MessageFlags.Ephemeral });
+    }
+
     return interaction.reply({
-      content: "❌ このコマンドはサーバーオーナーまたは管理者権限を持つユーザーのみ実行できます。",
+      content: [
+        "あなたはギルド ブラックリストに入っています",
+        "異議申し立てはこちら",
+        setting.blacklist_appeal_url || "未設定",
+      ].join("\n"),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  if (!canManageSetup(interaction)) {
+    return interaction.reply({
+      content: "❌ このコマンドはサーバーオーナー/管理者、または /config で許可されたユーザーのみ実行できます。",
       flags: MessageFlags.Ephemeral,
     });
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-  const sub     = interaction.options.getSubcommand();
   const guildId = interaction.guild.id;
 
-  if (sub === "allow_role") {
-    const role = interaction.options.getRole("role", true);
-    await AllowedPrincipalDB.add("role", role.id, guildId);
-    return interaction.editReply({ content: `✅ ロール **${role.name}** を /start 許可リストに追加しました。` });
+  if (sub === "add_deny_channel") {
+    const channel = interaction.options.getChannel("channel", true);
+    const added = await DenyChannelDB.add(guildId, channel.id, interaction.user.id);
+    if (!added) return interaction.editReply({ content: `⚠️ <#${channel.id}> はすでに拒否チャンネルです。` });
+    return interaction.editReply({ content: `✅ <#${channel.id}> を拒否チャンネルに追加しました。` });
   }
 
-  if (sub === "remove_role") {
-    const role = interaction.options.getRole("role", true);
-    await AllowedPrincipalDB.remove("role", role.id, guildId);
-    return interaction.editReply({ content: `🗑️ ロール **${role.name}** を /start 許可リストから削除しました。` });
+  if (sub === "del_deny_channel_list") {
+    const channel = interaction.options.getChannel("channel", true);
+    const removed = await DenyChannelDB.remove(guildId, channel.id);
+    if (!removed) return interaction.editReply({ content: `⚠️ <#${channel.id}> は拒否チャンネルに登録されていません。` });
+    return interaction.editReply({ content: `✅ <#${channel.id}> を拒否チャンネルから削除しました。` });
   }
 
-  if (sub === "allow_user") {
-    const user = interaction.options.getUser("user", true);
-    await AllowedPrincipalDB.add("user", user.id, guildId);
-    return interaction.editReply({ content: `✅ ユーザー **${user.tag}** を /start 許可リストに追加しました。` });
+  if (sub === "set_blacklist_status") {
+    const enabled = interaction.options.getBoolean("enabled", true);
+    const appealUrl = interaction.options.getString("appeal_url", false)?.trim() ?? "";
+    const setting = await GuildSettingDB.upsert(guildId, {
+      blacklist_status_enabled: enabled,
+      blacklist_appeal_url: appealUrl,
+    });
+    return interaction.editReply({
+      content: [
+        `✅ blacklist_status: ${setting.blacklist_status_enabled ? "有効" : "無効"}`,
+        `異議申し立てURL: ${setting.blacklist_appeal_url || "未設定"}`,
+      ].join("\n"),
+    });
   }
 
-  if (sub === "remove_user") {
-    const user = interaction.options.getUser("user", true);
-    await AllowedPrincipalDB.remove("user", user.id, guildId);
-    return interaction.editReply({ content: `🗑️ ユーザー **${user.tag}** を /start 許可リストから削除しました。` });
-  }
+  const entries = DenyChannelDB.findByGuild(guildId);
+  if (entries.length === 0) return interaction.editReply({ content: "📋 deny_channel は未登録です。" });
 
-  if (sub === "list") {
-    const principals = AllowedPrincipalDB.findByGuild(guildId);
-    if (principals.length === 0) {
-      return interaction.editReply({ content: "📋 このサーバーの許可リストは空です。" });
-    }
-    const roles = principals.filter((p) => p.type === "role").map((p) => `<@&${p.id}>`).join("\n") || "なし";
-    const users = principals.filter((p) => p.type === "user").map((p) => `<@${p.id}>`).join("\n") || "なし";
-    const embed = new EmbedBuilder()
-      .setTitle("📋 /start 許可リスト")
-      .setColor(0x5865f2)
-      .addFields(
-        { name: "許可ロール", value: roles, inline: true },
-        { name: "許可ユーザー", value: users, inline: true },
-      )
-      .setTimestamp();
-    return interaction.editReply({ embeds: [embed] });
-  }
+  const lines = entries.map((e, i) => `${i + 1}. <#${e.channel_id}> / 追加者: <@${e.added_by}> / 追加日時: ${formatDateTime(e.added_at)} / 残り: ${formatRemaining(null)}`);
+  const embed = new EmbedBuilder()
+    .setTitle("🚫 deny_channel 一覧")
+    .setColor(0xed4245)
+    .setDescription(lines.join("\n"))
+    .setTimestamp();
+  return interaction.editReply({ embeds: [embed] });
 }
