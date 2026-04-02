@@ -18,6 +18,41 @@ const commandFiles = readdirSync(commandsPath).filter((f) => f.endsWith(".js"));
 
 const jsonCommands = [];
 
+/**
+ * Discord API 登録前にコマンドJSONを正規化する
+ * - 同名オプションを除去（先勝ち）
+ * - required=true を required=false より前へ並べる
+ * @param {any} node
+ * @returns {any}
+ */
+function sanitizeCommandNode(node) {
+  if (!node || typeof node !== "object") return node;
+
+  const out = { ...node };
+  if (!Array.isArray(out.options)) return out;
+
+  // 子要素を先に再帰正規化
+  const normalizedChildren = out.options.map((child) => sanitizeCommandNode(child));
+
+  // 同名オプション除去（先勝ち）
+  const seen = new Set();
+  const uniqueChildren = normalizedChildren.filter((child) => {
+    const key = `${child.type}:${child.name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // required オプションは先頭へ（同グループ内の順序は維持）
+  const requiredFirst = [
+    ...uniqueChildren.filter((child) => child.required === true),
+    ...uniqueChildren.filter((child) => child.required !== true),
+  ];
+
+  out.options = requiredFirst;
+  return out;
+}
+
 for (const file of commandFiles) {
   const fileUrl = pathToFileURL(join(commandsPath, file)).href;
   const mod     = await import(fileUrl);
@@ -27,7 +62,7 @@ for (const file of commandFiles) {
     continue;
   }
 
-  jsonCommands.push(mod.data.toJSON());
+  jsonCommands.push(sanitizeCommandNode(mod.data.toJSON()));
   console.log(`[deploy] 読み込み: /${mod.data.name}`);
 }
 
