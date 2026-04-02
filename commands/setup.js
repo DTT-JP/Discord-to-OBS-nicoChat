@@ -5,7 +5,7 @@ import {
   MessageFlags,
   ChannelType,
 } from "discord.js";
-import { DenyChannelDB, GuildSettingDB, LocalBlacklistDB, SetupPrincipalDB } from "../database.js";
+import { DenyChannelDB, GuildSettingDB, SetupPrincipalDB } from "../database.js";
 import { isAdminOrOwner, formatDateTime, formatRemaining } from "../utils/moderation.js";
 
 function canManageSetup(interaction) {
@@ -29,38 +29,17 @@ export const data = new SlashCommandBuilder()
       .setDescription("禁止チャンネルから削除")
       .addChannelOption((opt) => opt.setName("channel").setDescription("対象チャンネル").addChannelTypes(ChannelType.GuildText).setRequired(true)),
   )
+  .addSubcommand((sub) => sub.setName("deny_channel_list").setDescription("禁止チャンネル一覧を表示"))
   .addSubcommand((sub) =>
     sub
       .setName("set_blacklist_status")
       .setDescription("サーバーブラックリスト照会コマンドの可否/URLを設定")
       .addBooleanOption((opt) => opt.setName("enabled").setDescription("有効にするか").setRequired(true))
       .addStringOption((opt) => opt.setName("appeal_url").setDescription("異議申し立て先URL（enabled=true時推奨）").setRequired(false)),
-  )
-  .addSubcommand((sub) => sub.setName("blacklist_status").setDescription("自分がサーバーブラックリストか確認"));
+  );
 
 export async function execute(interaction) {
   const sub = interaction.options.getSubcommand();
-
-  if (sub === "blacklist_status") {
-    const setting = GuildSettingDB.find(interaction.guild.id);
-    if (!setting.blacklist_status_enabled) {
-      return interaction.reply({ content: "このサーバーではこのコマンドは使用できません", flags: MessageFlags.Ephemeral });
-    }
-
-    const entry = LocalBlacklistDB.find(interaction.user.id, interaction.guild.id);
-    if (!entry) {
-      return interaction.reply({ content: "あなたはブラックリストに登録されていません", flags: MessageFlags.Ephemeral });
-    }
-
-    return interaction.reply({
-      content: [
-        "あなたはギルド ブラックリストに入っています",
-        "異議申し立てはこちら",
-        setting.blacklist_appeal_url || "未設定",
-      ].join("\n"),
-      flags: MessageFlags.Ephemeral,
-    });
-  }
 
   if (!canManageSetup(interaction)) {
     return interaction.reply({

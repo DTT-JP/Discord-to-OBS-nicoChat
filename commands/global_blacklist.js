@@ -54,26 +54,10 @@ export const data = new SlashCommandBuilder()
       .setName("show")
       .setDescription("特定ユーザーの詳細情報を表示")
       .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー").setRequired(true)),
-  )
-  .addSubcommand((sub) => sub.setName("status").setDescription("自分がグローバルブラックリストか確認"));
+  );
 
 export async function execute(interaction) {
   const sub = interaction.options.getSubcommand();
-
-  if (sub === "status") {
-    const entry = GlobalBlacklistDB.find(interaction.user.id);
-    if (!entry) {
-      return interaction.reply({ content: "あなたはブラックリストに登録されていません", flags: MessageFlags.Ephemeral });
-    }
-    return interaction.reply({
-      content: [
-        "あなたはグローバル ブラックリストに入っています",
-        "異議申し立てはこちら",
-        process.env.GLOBAL_BLACKLIST_APPEAL_URL || "未設定",
-      ].join("\n"),
-      flags: MessageFlags.Ephemeral,
-    });
-  }
 
   if (!process.env.BOT_OWNER_ID?.trim()) {
     return interaction.reply({ content: "❌ `BOT_OWNER_ID` が `.env` に設定されていません。", flags: MessageFlags.Ephemeral });
