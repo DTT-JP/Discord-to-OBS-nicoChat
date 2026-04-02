@@ -1,6 +1,7 @@
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONFilePreset } from "lowdb/node";
+import { hashToken, hashAuthCode, secureEqualHex } from "./utils/crypto.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH   = join(__dirname, "db.json");
@@ -10,10 +11,11 @@ const DB_PATH   = join(__dirname, "db.json");
 /**
  * @typedef {Object} PendingAuth
  * @property {string} token
+ * @property {string} token_hash
  * @property {string} socket_id
  * @property {string} user_id
  * @property {string} channel_id
- * @property {string} code
+ * @property {string} code_hash
  * @property {number} expires_at
  * @property {number} max_comments
  */
@@ -21,6 +23,7 @@ const DB_PATH   = join(__dirname, "db.json");
 /**
  * @typedef {Object} ActiveSession
  * @property {string} token
+ * @property {string} token_hash
  * @property {string} socket_id
  * @property {string} user_id
  * @property {string} channel_id
@@ -90,11 +93,18 @@ if (!db.data.local_blacklist) {
 
 export const PendingAuthDB = {
   add(record) {
+    record.token_hash = hashToken(record.token);
+    record.code_hash  = record.code ? hashAuthCode(record.code, record.user_id) : "";
+    record.token      = "";
+    record.code       = "";
     db.data.pending_auths.push(record);
     return db.write();
   },
   findByToken(token) {
-    return db.data.pending_auths.find((r) => r.token === token);
+    const tokenHash = hashToken(token);
+    return db.data.pending_auths.find((r) =>
+      secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
+    );
   },
   findBySocketId(socketId) {
     return db.data.pending_auths.find((r) => r.socket_id === socketId);
@@ -103,12 +113,18 @@ export const PendingAuthDB = {
     return db.data.pending_auths.find((r) => r.user_id === userId);
   },
   findByCodeAndUser(code, userId) {
-    return db.data.pending_auths.find(
-      (r) => r.code === code && r.user_id === userId,
-    );
+    const codeHash = hashAuthCode(code, userId);
+    return db.data.pending_auths.find((r) => {
+      if (r.user_id !== userId) return false;
+      const recordHash = r.code_hash || (r.code ? hashAuthCode(r.code, r.user_id) : "");
+      return secureEqualHex(recordHash, codeHash);
+    });
   },
   removeByToken(token) {
-    db.data.pending_auths = db.data.pending_auths.filter((r) => r.token !== token);
+    const tokenHash = hashToken(token);
+    db.data.pending_auths = db.data.pending_auths.filter(
+      (r) => !secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
+    );
     return db.write();
   },
   removeBySocketId(socketId) {
@@ -125,10 +141,14 @@ export const PendingAuthDB = {
     return db.write();
   },
   updateSocketAndCode(token, socketId, code) {
-    const record = db.data.pending_auths.find((r) => r.token === token);
+    const tokenHash = hashToken(token);
+    const record = db.data.pending_auths.find((r) =>
+      secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
+    );
     if (!record) return Promise.resolve();
     record.socket_id = socketId;
-    record.code      = code;
+    record.code_hash = hashAuthCode(code, record.user_id);
+    record.code      = "";
     return db.write();
   },
 };
@@ -139,11 +159,16 @@ export const PendingAuthDB = {
 
 export const ActiveSessionDB = {
   add(record) {
+    record.token_hash = hashToken(record.token);
+    record.token      = "";
     db.data.active_sessions.push(record);
     return db.write();
   },
   findByToken(token) {
-    return db.data.active_sessions.find((r) => r.token === token);
+    const tokenHash = hashToken(token);
+    return db.data.active_sessions.find((r) =>
+      secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
+    );
   },
   findBySocketId(socketId) {
     return db.data.active_sessions.find((r) => r.socket_id === socketId);
