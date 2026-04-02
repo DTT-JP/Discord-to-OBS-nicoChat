@@ -10,6 +10,7 @@ export const once  = false;
  */
 export async function execute(interaction, client) {
   if (!interaction.isChatInputCommand()) return;
+  const subcommand = interaction.options.getSubcommand(false);
 
   // ── グローバルブラックリストチェック ──────────
   // コマンド実行自体を遮断する（ローカルBLはコマンドは許可・OBSのみ遮断）
