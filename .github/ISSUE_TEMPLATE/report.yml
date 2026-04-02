@@ -1,0 +1,31 @@
+name: GBL推薦 (Global Blacklist Recommendation)
+description: グローバルブラックリストへの登録を推薦・報告します。
+title: "[GBL-Report]: "
+labels: ["gbl-report"]
+body:
+  - type: input
+    id: target_username
+    attributes:
+      label: 報告対象のユーザー名 (@ID)
+    validations:
+      required: true
+  - type: input
+    id: target_user_id
+    attributes:
+      label: 報告対象のユーザーID (数字)
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: 推薦・報告の理由
+      description: どのような迷惑行為、規約違反があったか詳しく記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 証拠 (発言内容など)
+      description: スクリーンショットの貼り付けや、メッセージリンク、ログなど。
+    validations:
+      required: true

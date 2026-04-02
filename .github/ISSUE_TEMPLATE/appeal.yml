@@ -1,0 +1,37 @@
+name: 異議申し立て (Appeal)
+description: ブラックリスト登録に対する解除申請を行います。
+title: "[Appeal]: "
+labels: ["appeal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ 注意事項
+        - 虚偽の報告が発覚した場合、今後の全ての異議申し立てを拒否する場合があります。
+        - 第三者によるなりすまし申請は無効です。
+  - type: input
+    id: username
+    attributes:
+      label: ユーザー名 (@ID)
+      placeholder: "例: @your_name"
+    validations:
+      required: true
+  - type: input
+    id: user_id
+    attributes:
+      label: ユーザーID (数字)
+      placeholder: "例: 123456789012345678"
+    validations:
+      required: true
+  - type: textarea
+    id: intent
+    attributes:
+      label: 異議申し立ての趣旨
+      description: なぜ解除されるべきだと考えるか、理由を詳しく記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 補足・証拠
+      description: スクリーンショット（画像を貼り付け可）や当時の状況説明など。
