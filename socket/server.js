@@ -22,6 +22,15 @@ export function createSocketServer() {
     ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
     : [];
 
+  const isLocalOrigin = (origin) => {
+    try {
+      const { hostname } = new URL(origin);
+      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+    } catch {
+      return false;
+    }
+  };
+
   const io = new Server(httpServer, {
     cors: {
       origin: (origin, callback) => {
@@ -32,6 +41,12 @@ export function createSocketServer() {
         if (allowedOrigins.includes(origin)) {
           return callback(null, true);
         }
+
+        // ローカル開発時は ALLOWED_ORIGINS 未設定でも localhost 系を許可
+        if (allowedOrigins.length === 0 && isLocalOrigin(origin)) {
+          return callback(null, true);
+        }
+
         console.warn(`[CORS] Blocked: ${origin}`);
         callback(new Error("Not allowed by CORS"));
       },
