@@ -9,6 +9,10 @@ import { setBroadcastFn }     from "../events/messageCreate.js";
  * @param {import("socket.io").Server} io
  */
 export function initSocketManager(io) {
+  /** @type {Map<string, { count: number, windowStart: number }>} */
+  const connectionAttempts = new Map();
+  const WINDOW_MS = 60_000;
+  const MAX_ATTEMPTS_PER_MIN = 30;
 
   // ── AES鍵・上限値の配布 ──────────────────────────
   setDistributeKeyFn((socketId, aesKey, maxComments) => {
@@ -49,10 +53,27 @@ export function initSocketManager(io) {
   io.on("connection", async (socket) => {
     console.log(`[manager] 接続試行: socketId=${socket.id}`);
 
-    const token = socket.handshake.query.token;
+    const ip = socket.handshake.address || "unknown";
+    const now = Date.now();
+    const ipAttempt = connectionAttempts.get(ip) ?? { count: 0, windowStart: now };
+    if (now - ipAttempt.windowStart >= WINDOW_MS) {
+      ipAttempt.count = 0;
+      ipAttempt.windowStart = now;
+    }
+    ipAttempt.count += 1;
+    connectionAttempts.set(ip, ipAttempt);
 
-    if (typeof token !== "string" || !token) {
-      socket.emit("error_msg", { code: "NO_TOKEN", message: "トークンが指定されていません" });
+    if (ipAttempt.count > MAX_ATTEMPTS_PER_MIN) {
+      socket.emit("error_msg", { code: "RATE_LIMIT", message: "接続試行回数が多すぎます。しばらく待って再試行してください" });
+      socket.disconnect(true);
+      return;
+    }
+
+    const token = socket.handshake.query.token;
+    const isValidTokenFormat = typeof token === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(token);
+
+    if (!isValidTokenFormat) {
+      socket.emit("error_msg", { code: "INVALID_TOKEN_FORMAT", message: "トークン形式が不正です" });
       socket.disconnect(true);
       return;
     }
@@ -76,13 +97,13 @@ export function initSocketManager(io) {
 
     const code = generateAuthCode();
     await PendingAuthDB.updateSocketAndCode(token, socket.id, code);
-    console.log(`[manager] 接続確立: socketId=${socket.id} code=${code}`);
+    console.log(`[manager] 接続確立: socketId=${socket.id}`);
 
     function sendAuthCode() {
       const isAuthenticated = !!ActiveSessionDB.findBySocketId(socket.id);
       if (isAuthenticated) return;
       socket.emit("auth_code", { code });
-      console.log(`[manager] auth_code 送信: socketId=${socket.id} code=${code}`);
+      console.log(`[manager] auth_code 送信: socketId=${socket.id}`);
     }
 
     socket.on("client_ready", () => {

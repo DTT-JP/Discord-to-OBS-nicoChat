@@ -72,13 +72,14 @@ export async function execute(interaction) {
   const pending = PendingAuthDB.findByCodeAndUser(code, userId);
 
   if (!pending) {
+    const remains = Math.max(0, MAX_ATTEMPTS - record.count);
     return interaction.editReply({
-      content: `❌ 認証コードが正しくないか、セッションが見つかりません。\n\`/start\` からやり直してください。（残り試行回数: ${MAX_ATTEMPTS - record.count}）`,
+      content: `❌ 認証コードが正しくないか、セッションが見つかりません。\n\`/start\` からやり直してください。（残り試行回数: ${remains}）`,
     });
   }
 
   if (Date.now() > pending.expires_at) {
-    await PendingAuthDB.removeByToken(pending.token);
+    await PendingAuthDB.removeByUserId(userId);
     return interaction.editReply({
       content: "❌ 認証コードの有効期限が切れています。\n`/start` からやり直してください。",
     });
@@ -106,7 +107,7 @@ export async function execute(interaction) {
     max_comments: maxComments,
   });
 
-  await PendingAuthDB.removeByToken(pending.token);
+  await PendingAuthDB.removeByUserId(userId);
 
   // AES鍵と上限値をクライアントへ配布
   if (distributeKeyFn) {
