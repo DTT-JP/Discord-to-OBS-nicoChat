@@ -14,14 +14,49 @@ const PUBLIC_DIR = join(__dirname, "../public");
 export function createSocketServer() {
   const app        = express();
   const httpServer = createServer(app);
+
+  // ── CORS設定 ──────────────────────────────────
+  // ALLOWED_ORIGINS に許可するオリジンをカンマ区切りで設定する（例: https://example.com,https://obs.example.com）
+  // 未設定の場合は !origin（OBSブラウザソースなど）のみ許可する
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+    : [];
+
+  const isLocalOrigin = (origin) => {
+    try {
+      const { hostname } = new URL(origin);
+      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+    } catch {
+      return false;
+    }
+  };
+
   const io = new Server(httpServer, {
-    cors: { origin: "*", methods: ["GET", "POST"] },
-    pingTimeout:       20_000,
-    pingInterval:      10_000,
-    // pollingからwebsocketへのアップグレードを即座に行う
-    upgradeTimeout:    5_000,
-    // httpポーリングの最大待機時間を短縮して遅延を抑える
-    allowUpgrades:     true,
+    cors: {
+      origin: (origin, callback) => {
+        // OBSブラウザソースは origin が null/undefined になるため許可
+        if (!origin) {
+          return callback(null, true);
+        }
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+
+        // ローカル開発時は ALLOWED_ORIGINS 未設定でも localhost 系を許可
+        if (allowedOrigins.length === 0 && isLocalOrigin(origin)) {
+          return callback(null, true);
+        }
+
+        console.warn(`[CORS] Blocked: ${origin}`);
+        callback(new Error("Not allowed by CORS"));
+      },
+      methods:     ["GET", "POST"],
+      credentials: true,
+    },
+    pingTimeout:    20_000,
+    pingInterval:   10_000,
+    upgradeTimeout:  5_000,
+    allowUpgrades:  true,
   });
 
   // ── 静的ファイル配信 ──────────────────────────

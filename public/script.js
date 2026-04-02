@@ -42,12 +42,7 @@
   const stage           = document.getElementById("stage");
 
   // ────────────────────────────────────────────────
-  // ★ 修正1: 画面サイズ取得
-  //
-  // Linux の OBS ブラウザソース（CEF）では window.innerHeight / innerWidth が
-  // 初期化タイミングによって 0 を返すケースがある。
-  // → stage 要素の getBoundingClientRect() をフォールバックとして使い、
-  //   それも 0 なら OBS のデフォルト解像度（1920×1080）を仮定する。
+  // 画面サイズ取得
   // ────────────────────────────────────────────────
   function getScreenSize() {
     let W = window.innerWidth;
@@ -104,13 +99,6 @@
   // ユーティリティ
   // ────────────────────────────────────────────────
 
-  /**
-   * ★ 修正2: vh → px 変換
-   *
-   * 元のコードは window.innerHeight を直接使っていたが、
-   * Linux OBS CEF では innerHeight が 0 を返す場合がある。
-   * getScreenSize() 経由で安全に H を取得する。
-   */
   function vhToPx(vh) {
     const { H } = getScreenSize();
     return Math.round(H * vh / 100);
@@ -144,6 +132,18 @@
     try {
       aesKey            = await importKey(key);
       MAX_FLOW_COMMENTS = maxComments;
+
+      // ── 認証コードをDOMから完全に削除 ──────────
+      // トークンがURLに残るため、認証後は画面上から
+      // コードを残さないようにテキストと要素をクリアする
+      authCodeDisplay.textContent = "";
+      const codeLabel = authScreen.querySelector("h1");
+      if (codeLabel) codeLabel.remove();
+      const codeDesc = authScreen.querySelector("p");
+      if (codeDesc) codeDesc.remove();
+      // authCodeDisplay 自体も空にして非表示
+      authCodeDisplay.style.display = "none";
+
       authScreen.style.display = "none";
       console.log("[overlay] 認証完了 maxComments=", maxComments);
     } catch (e) {
@@ -195,9 +195,11 @@
       fixedSlots[side].forEach((s) => { if (s) { clearTimeout(s.timerId); s.el.remove(); } });
       fixedSlots[side].fill(null);
     }
-    authCodeDisplay.textContent = "------";
-    authCodeDisplay.style.color = "#57f287";
-    authScreen.style.display    = "flex";
+    // 切断時: 認証コード表示をリセットして認証画面を再表示
+    authCodeDisplay.textContent  = "------";
+    authCodeDisplay.style.color  = "#57f287";
+    authCodeDisplay.style.display = "";
+    authScreen.style.display     = "flex";
   });
 
   socket.on("connect_error", (e) => {
@@ -224,16 +226,6 @@
   // パーツ要素生成
   // ────────────────────────────────────────────────
 
-  /**
-   * ★ 修正3: 色の適用
-   *
-   * 元のコードは span.style.color = payload.color を設定していたが、
-   * Linux OBS CEF では特定の条件でインラインスタイルが無視されることがある。
-   *
-   * 対策:
-   *  - style.setProperty("color", value, "important") で強制上書き
-   *  - gaming エフェクト判定を正確に行い、gaming 時のみ color を設定しない
-   */
   function buildParts(payload, forFixed = false) {
     const sizeKey = (payload.size && SIZE_CONFIG[payload.size])
       ? payload.size
@@ -281,12 +273,10 @@
           span.style.lineHeight   = "1.3";
           span.style.whiteSpace   = "pre";
 
-          // ★ 修正3: color を !important で強制設定
           if (!hasGaming) {
             const color = payload.color || "#ffffff";
             span.style.setProperty("color", color, "important");
           }
-          // gaming エフェクト時は color を設定しない（CSS animation が有効になる）
 
           span.textContent        = part.content;
 
@@ -355,12 +345,10 @@
       if (now > activeRects[i].expire) activeRects.splice(i, 1);
     }
 
-    // maxY が minY 以下（画面より要素が大きい）→ 上端固定
     if (maxY <= minY) return minY;
 
     const range = maxY - minY;
 
-    // 指定Y座標が既存矩形と衝突する重なり量を返す（0なら衝突なし）
     function overlapAt(y) {
       const bottom = y + elH;
       let maxOverlap = 0;
@@ -372,7 +360,6 @@
       return maxOverlap;
     }
 
-    // ランダムな位置を最大20回試して衝突なしを探す
     let bestY     = Math.floor(Math.random() * (range + 1)) + minY;
     let bestScore = Infinity;
 
@@ -380,16 +367,14 @@
       const candidate = Math.floor(Math.random() * (range + 1)) + minY;
       const overlap   = overlapAt(candidate);
 
-      if (overlap === 0) return candidate; // 衝突なし → 即確定
+      if (overlap === 0) return candidate;
 
-      // 衝突があっても最も重なりが少ない位置を記録
       if (overlap < bestScore) {
         bestScore = overlap;
         bestY     = candidate;
       }
     }
 
-    // 20回全て衝突 → 重なりが最小の位置を maxY でクランプして返す
     return Math.min(bestY, maxY);
   }
 
@@ -416,10 +401,6 @@
       const elW      = el.offsetWidth;
       const elH      = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
 
-      // ── Y座標（ランダム・見切れ防止） ────────────
-      // 画面全体をランダムに使う
-      // 下が見切れないよう maxY = H - elH でクランプ
-      // 要素が画面より大きい場合は上端固定（下が見切れるのは仕方なし）
       const minY = 0;
       const maxY = Math.max(0, H - elH);
       const topY = elH >= H ? 0 : findFreeY(elH, minY, maxY);
@@ -440,8 +421,6 @@
         );
         anim.onfinish = () => { el.remove(); flowCount--; };
       } else {
-        // ★ 修正4: "100vw" の代わりに px 値を直接設定
-        // Linux OBS CEF では vw 単位が正しく解釈されないケースがある
         el.style.left      = `${W}px`;
         el.style.animation = `flow ${duration}s linear forwards`;
         el.addEventListener("animationend", () => { el.remove(); flowCount--; }, { once: true });
@@ -468,21 +447,9 @@
   // 固定コメント
   // ────────────────────────────────────────────────
 
-  /**
-   * ★ 修正5: 上下固定コメントの座標計算
-   *
-   * 元のコードは shita（下固定）でも top を計算して style.top に設定していた。
-   * Linux OBS CEF では負の top や大きな top が正しく処理されない場合がある。
-   *
-   * 修正:
-   *  - ue（上固定）   → style.top    に px を直接設定（変わらず）
-   *  - shita（下固定）→ style.bottom に px を直接設定（new）
-   *    element の bottom からの距離を計算することで負値を回避
-   */
   function calcFixedPosition(side, slotIndex, elH) {
-    const { H }   = getScreenSize();
-    const slots   = fixedSlots[side];
-    let offset    = 0;
+    const slots = fixedSlots[side];
+    let offset  = 0;
 
     for (let i = 0; i < slotIndex; i++) {
       if (slots[i]) {
@@ -493,13 +460,12 @@
     if (side === "ue") {
       return { prop: "top",    value: offset };
     } else {
-      // bottom プロパティで指定: 画面下端からのオフセット
       return { prop: "bottom", value: offset };
     }
   }
 
   function renderFixed(payload) {
-    const side  = payload.position; // "ue" | "shita"
+    const side  = payload.position;
     const slots = fixedSlots[side];
 
     let slotIndex = slots.findIndex((s) => s === null);
@@ -519,11 +485,9 @@
     el.className        = "comment-fixed";
     el.style.visibility = "hidden";
 
-    // ★ 修正5: shita のとき top ではなく bottom を使うので
-    //   先に top をリセットしておく（CSSクラスに top: auto を明示）
     if (side === "shita") {
       el.style.top    = "auto";
-      el.style.bottom = "0px"; // 仮置き（rAF 内で上書き）
+      el.style.bottom = "0px";
     }
 
     el.appendChild(buildParts(payload, true));
@@ -532,10 +496,9 @@
     stage.appendChild(el);
 
     requestAnimationFrame(() => {
-      const elH      = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
-      const pos      = calcFixedPosition(side, slotIndex, elH);
+      const elH = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
+      const pos = calcFixedPosition(side, slotIndex, elH);
 
-      // ★ top / bottom どちらを使うか分岐
       if (pos.prop === "top") {
         el.style.top    = `${pos.value}px`;
         el.style.bottom = "auto";
