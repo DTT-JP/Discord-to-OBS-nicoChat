@@ -13,7 +13,8 @@ export async function execute(interaction, client) {
 
   // ── グローバルブラックリストチェック ──────────
   // コマンド実行自体を遮断する（ローカルBLはコマンドは許可・OBSのみ遮断）
-  if (GlobalBlacklistDB.has(interaction.user.id)) {
+  const isMyStatusCheck = interaction.commandName === "my-status";
+  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck) {
     return interaction.reply({
       content: "このBotを利用する権限がありません。",
       flags: MessageFlags.Ephemeral,

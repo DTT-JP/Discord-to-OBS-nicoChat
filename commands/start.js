@@ -5,7 +5,7 @@ import {
   MessageFlags,
 } from "discord.js";
 import { v4 as uuidv4 } from "uuid";
-import { AllowedPrincipalDB, PendingAuthDB, ActiveSessionDB } from "../database.js";
+import { AllowedPrincipalDB, PendingAuthDB, ActiveSessionDB, DenyChannelDB } from "../database.js";
 
 const {
   HOST,
@@ -47,7 +47,7 @@ export async function execute(interaction) {
   const member = interaction.member;
   if (!AllowedPrincipalDB.isAllowed(member)) {
     return interaction.reply({
-      content: "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/setup allow_role` または `/setup allow_user` での許可を依頼してください。",
+      content: "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/config allow_role` または `/config allow_user` での許可を依頼してください。",
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -57,6 +57,12 @@ export async function execute(interaction) {
   const userId      = interaction.user.id;
   const channel     = interaction.options.getChannel("channel", true);
   const maxComments = interaction.options.getInteger("limit") ?? Number(MAX_COMMENTS);
+
+  if (DenyChannelDB.has(interaction.guild.id, channel.id)) {
+    return interaction.editReply({
+      content: "❌ このチャンネルは deny_channel に設定されているため /start を実行できません。",
+    });
+  }
 
   // ── Botのチャンネルアクセス権限チェック ──────────
   const botMember  = interaction.guild.members.me;
