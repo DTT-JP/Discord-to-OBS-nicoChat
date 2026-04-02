@@ -3,7 +3,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { Client, Collection, GatewayIntentBits, Partials } from "discord.js";
+import {
+  Client,
+  Collection,
+  GatewayIntentBits,
+  Partials,
+  Options,
+  LimitedCollection,
+} from "discord.js";
 import { createSocketServer } from "./socket/server.js";
 import { initSocketManager } from "./socket/manager.js";
 import { ActiveSessionDB, PendingAuthDB } from "./database.js";
@@ -27,6 +34,7 @@ const PORT = Number(process.env.PORT);
 
 // ─────────────────────────────────────────────
 // Discord クライアント初期化
+// キャッシュ上限・自動掃除でメモリ使用量を抑制する
 // ─────────────────────────────────────────────
 
 const client = new Client({
@@ -41,6 +49,49 @@ const client = new Client({
     Partials.Channel,   // DM チャンネルの受信に必要
     Partials.Message,
   ],
+
+  // ── キャッシュ上限設定 ──────────────────────
+  // 無制限キャッシュによるメモリ増大を防ぐ
+  makeCache: Options.cacheWithLimits({
+    // メッセージキャッシュ: チャンネルあたり最大50件
+    MessageManager:      50,
+    // ユーザーキャッシュ: 最大200件（DM相手など）
+    UserManager:        200,
+    // その他は最小限に抑える
+    GuildMemberManager: 200,
+    // スラッシュコマンドに不要なキャッシュを無効化
+    GuildEmojiManager:    0,
+    GuildStickerManager:  0,
+    GuildInviteManager:   0,
+    PresenceManager:      0,
+    ReactionManager:      0,
+    StageInstanceManager: 0,
+    ThreadManager:        0,
+    VoiceStateManager:    0,
+  }),
+
+  // ── 自動スウィーパー設定 ────────────────────
+  // 定期的にキャッシュを掃除してメモリを解放する
+  sweepers: {
+    ...Options.DefaultSweeperSettings,
+    messages: {
+      // 5分ごとにスウィープ
+      interval: 300,
+      // 1時間以上経過したメッセージを削除
+      lifetime: 3600,
+    },
+    users: {
+      // 5分ごとにスウィープ
+      interval: 300,
+      // Botのユーザーオブジェクト自身は残す
+      filter: () => (user) => user.id !== client.user?.id,
+    },
+    guildMembers: {
+      interval: 300,
+      // Botメンバー自身は残す
+      filter: () => (member) => member.id !== client.user?.id,
+    },
+  },
 });
 
 // コマンドを格納する Map を client に付与
