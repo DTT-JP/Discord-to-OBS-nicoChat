@@ -13,14 +13,23 @@ export async function execute(interaction) {
     .addFields(
       // ── セットアップ ──────────────────────────
       {
-        name:  "🔧 `/config` （サーバーオーナー・管理者専用）",
+        name:  "🔧 `/config` （サーバーオーナー・管理者のみ）",
         value: [
-          "`/config allow_role @ロール` — /start を許可するロールを追加",
-          "`/config remove_role @ロール` — /start の許可ロールを削除",
-          "`/config allow_user @ユーザー` — /start を許可するユーザーを追加",
-          "`/config remove_user @ユーザー` — /start の許可ユーザーを削除",
-          "`/config list` — 現在の許可リストを表示",
-          "（`/setup` は拒否チャンネル・BL 照会設定などサーバー別オプション用）",
+          "`/config add_setup_role` — `/setup` を実行できるロールを追加",
+          "`/config del_setup_role` — 上記ロールを削除",
+          "`/config add_setup_user` — `/setup` を実行できるユーザーを追加",
+          "`/config del_setup_user` — 上記ユーザーを削除",
+          "`/config list` — `/setup` 実行許可の一覧",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name:  "⚙️ `/setup` （オーナー・管理者、または `/config` で許可された人）",
+        value: [
+          "`/setup overview` — 拒否チャンネル・/start 許可・BL・URL の一覧",
+          "`/setup blacklist_info` — 自分のBL状況と異議申し立てURL",
+          "`/setup allow_start_*` — /start を誰に許可するか",
+          "拒否チャンネル・`/my-status` 照会の有効化・URL など",
         ].join("\n"),
         inline: false,
       },

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from "discord.js";
 import { PendingAuthDB, ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
 import { generateAesKey, hashToken } from "../utils/crypto.js";
+import { isAdminOrOwner } from "../utils/moderation.js";
 
 export const data = new SlashCommandBuilder()
   .setName("auth")
@@ -32,11 +33,11 @@ const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS   = 5 * 60 * 1000; // 5分
 
 export async function execute(interaction) {
-  // ── setup で許可されたロール/ユーザーのみ実行可能 ──
   const member = interaction.member;
-  if (!AllowedPrincipalDB.isAllowed(member)) {
+  if (!member || (!isAdminOrOwner(interaction) && !AllowedPrincipalDB.isAllowed(member))) {
     return interaction.reply({
-      content: "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/config allow_role` または `/config allow_user` での許可を依頼してください。",
+      content:
+        "❌ このコマンドを実行する権限がありません。\n管理者に `/setup allow_start_role` または `/setup allow_start_user` での許可を依頼してください。",
       flags: MessageFlags.Ephemeral,
     });
   }

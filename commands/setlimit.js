@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
+import { isAdminOrOwner } from "../utils/moderation.js";
 
 export const data = new SlashCommandBuilder()
   .setName("setlimit")
@@ -26,11 +27,11 @@ export function setUpdateLimitFn(fn) {
 }
 
 export async function execute(interaction) {
-  // ── setup で許可されたロール/ユーザーのみ実行可能 ──
   const member = interaction.member;
-  if (!AllowedPrincipalDB.isAllowed(member)) {
+  if (!member || (!isAdminOrOwner(interaction) && !AllowedPrincipalDB.isAllowed(member))) {
     return interaction.reply({
-      content: "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/config allow_role` または `/config allow_user` での許可を依頼してください。",
+      content:
+        "❌ このコマンドを実行する権限がありません。\n管理者に `/setup allow_start_role` または `/setup allow_start_user` での許可を依頼してください。",
       flags: MessageFlags.Ephemeral,
     });
   }

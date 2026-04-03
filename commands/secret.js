@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB, ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
+import { isAdminOrOwner } from "../utils/moderation.js";
 
 /** セッションエフェクト更新関数（manager.js から注入） */
 let applySecretFn = null;
@@ -40,10 +41,10 @@ export async function execute(interaction) {
   }
 
   const member = interaction.member;
-  if (!member || !AllowedPrincipalDB.isAllowed(member)) {
+  if (!member || (!isAdminOrOwner(interaction) && !AllowedPrincipalDB.isAllowed(member))) {
     return interaction.reply({
       content:
-        "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/config allow_role` または `/config allow_user` での許可を依頼してください。",
+        "❌ このコマンドを実行する権限がありません。\n管理者に `/setup allow_start_role` または `/setup allow_start_user` での許可を依頼してください。",
       flags: MessageFlags.Ephemeral,
     });
   }
