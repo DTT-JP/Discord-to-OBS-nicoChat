@@ -60,8 +60,22 @@
   // Socket.io
   // ────────────────────────────────────────────────
 
-  const tokenFromUrl = new URLSearchParams(location.search).get("token");
-  const socket       = io({ query: { token: tokenFromUrl } });
+  const RESUME_STORAGE_KEY = "d2obs_resume_v1";
+  const UUID_RE =
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+  const RESUME_RE = /^[0-9a-fA-F]{64}$/;
+
+  const urlToken = new URLSearchParams(location.search).get("token");
+  let resumeStored = null;
+  try {
+    resumeStored = sessionStorage.getItem(RESUME_STORAGE_KEY);
+  } catch (_) { /* ストレージ不可 */ }
+
+  const socketQuery = (urlToken && UUID_RE.test(urlToken))
+    ? { token: urlToken }
+    : (resumeStored && RESUME_RE.test(resumeStored) ? { resume: resumeStored } : {});
+
+  const socket = io({ query: socketQuery });
 
   // ────────────────────────────────────────────────
   // WebCrypto
@@ -128,10 +142,16 @@
     console.log("[overlay] 認証コードを表示しました（ログには値を出しません）");
   });
 
-  socket.on("auth_success", async ({ key, maxComments }) => {
+  socket.on("auth_success", async ({ key, maxComments, resumeToken }) => {
     try {
       aesKey            = await importKey(key);
       MAX_FLOW_COMMENTS = maxComments;
+
+      if (typeof resumeToken === "string" && RESUME_RE.test(resumeToken)) {
+        try {
+          sessionStorage.setItem(RESUME_STORAGE_KEY, resumeToken);
+        } catch (_) { /* ignore */ }
+      }
 
       // ── 認証コードをDOMから完全に削除 ──────────
       // トークンがURLに残るため、認証後は画面上から

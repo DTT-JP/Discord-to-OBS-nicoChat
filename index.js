@@ -12,8 +12,14 @@ import {
   LimitedCollection,
 } from "discord.js";
 import { createSocketServer } from "./socket/server.js";
-import { initSocketManager } from "./socket/manager.js";
-import { ActiveSessionDB, PendingAuthDB } from "./database.js";
+import { initSocketManager, setSocketShuttingDown } from "./socket/manager.js";
+import {
+  PendingAuthDB,
+  migrateLegacyJsonIfNeeded,
+  getRestoredSessionCounts,
+  flushSessionsForProcessRestart,
+  closeDatabase,
+} from "./database.js";
 import { safeForLog } from "./utils/logSafe.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -22,16 +28,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // 環境変数バリデーション
 // ─────────────────────────────────────────────
 
-const REQUIRED_ENV = ["DISCORD_TOKEN", "CLIENT_ID", "PORT", "HOST"];
+const REQUIRED_ENV = ["DISCORD_TOKEN", "CLIENT_ID", "PORT", "HOST", "MASTER_KEY"];
 
 for (const key of REQUIRED_ENV) {
-  if (!process.env[key]) {
+  if (!process.env[key]?.trim()) {
     console.error(`[init] 環境変数 ${key} が設定されていません`);
     process.exit(1);
   }
 }
 
 const PORT = Number(process.env.PORT);
+
+migrateLegacyJsonIfNeeded();
+{
+  const { pending, active } = getRestoredSessionCounts();
+  console.log(`[init] SQLite セッション状態: pending_auth=${pending} active_sessions=${active}`);
+}
 
 // ─────────────────────────────────────────────
 // Discord クライアント初期化
@@ -199,13 +211,14 @@ async function shutdown(signal) {
   clearInterval(cleanupTimer);
 
   try {
-    // 1. 全アクティブセッションを DB から削除
-    await ActiveSessionDB.removeAll();
-    console.log("[shutdown] アクティブセッションを全削除しました");
+    // 1. PM2 reload 等でもセッション行を残す: ソケット ID のみ無効化して WAL をフラッシュ
+    setSocketShuttingDown(true);
+    flushSessionsForProcessRestart();
+    console.log("[shutdown] セッションを DB に保存（socket_id をクリア）しました");
 
-    // 2. 全 pending_auth を削除
+    // 2. 期限切れ pending_auth のみ削除
     await PendingAuthDB.removeExpired();
-    console.log("[shutdown] 期限切れ pending_auth を削除しました");
+    console.log("[shutdown] 期限切れ pending_auth を整理しました");
 
     // 3. Socket.io の全接続を切断
     await new Promise((resolve) => {
@@ -222,6 +235,9 @@ async function shutdown(signal) {
     // 5. Discord Bot をログアウト
     await client.destroy();
     console.log("[shutdown] Discord Bot をログアウトしました");
+
+    closeDatabase();
+    console.log("[shutdown] SQLite をクローズしました");
 
     console.log("[shutdown] クリーンアップ完了。プロセスを終了します");
     process.exit(0);

@@ -10,11 +10,11 @@
     "deploy-commands": "node deploy-commands.js"
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "discord.js": "^14.18.0",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
-    "lowdb": "^7.0.1",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0"
   },

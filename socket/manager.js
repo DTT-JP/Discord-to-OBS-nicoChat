@@ -6,6 +6,15 @@ import { setUpdateLimitFn }   from "../commands/setlimit.js";
 import { setApplySecretFn }   from "../commands/secret.js";
 import { setBroadcastFn }     from "../events/messageCreate.js";
 
+let shuttingDown = false;
+
+/** PM2 graceful reload 時: disconnect ハンドラで DB 行を消さない */
+export function setSocketShuttingDown(value) {
+  shuttingDown = !!value;
+}
+
+const RESUME_HEX_RE = /^[0-9a-fA-F]{64}$/;
+
 /**
  * @param {import("socket.io").Server} io
  */
@@ -16,8 +25,8 @@ export function initSocketManager(io) {
   const MAX_ATTEMPTS_PER_MIN = 30;
 
   // ── AES鍵・上限値の配布 ──────────────────────────
-  setDistributeKeyFn((socketId, aesKey, maxComments) => {
-    io.to(socketId).emit("auth_success", { key: aesKey, maxComments });
+  setDistributeKeyFn((socketId, aesKey, maxComments, resumeToken) => {
+    io.to(socketId).emit("auth_success", { key: aesKey, maxComments, resumeToken });
     console.log(`[manager] auth_success: socketId=${socketId} maxComments=${maxComments}`);
   });
 
@@ -28,10 +37,10 @@ export function initSocketManager(io) {
   });
 
   // ── セッションエフェクト適用 ──────────────────────
-  // channelId を監視している全セッションに apply_secret を送信
   setApplySecretFn((channelId, effect, value) => {
     const sessions = ActiveSessionDB.findByChannelId(channelId);
     for (const session of sessions) {
+      if (!session.socket_id) continue;
       io.to(session.socket_id).emit("apply_secret", { effect, value });
       console.log(`[manager] apply_secret: socketId=${session.socket_id} effect=${effect} value=${value}`);
     }
@@ -41,6 +50,7 @@ export function initSocketManager(io) {
   setBroadcastFn((channelId, payload) => {
     const sessions = ActiveSessionDB.findByChannelId(channelId);
     for (const session of sessions) {
+      if (!session.socket_id) continue;
       try {
         const encrypted = encrypt(JSON.stringify(payload), session.aes_key);
         io.to(session.socket_id).emit("message", encrypted);
@@ -71,8 +81,44 @@ export function initSocketManager(io) {
       return;
     }
 
+    const resume = socket.handshake.query.resume;
+    if (typeof resume === "string" && RESUME_HEX_RE.test(resume)) {
+      const session = ActiveSessionDB.findByResumeToken(resume);
+      if (!session) {
+        socket.emit("error_msg", { code: "INVALID_RESUME", message: "セッションの再開に失敗しました。/start からやり直してください。" });
+        socket.disconnect(true);
+        return;
+      }
+      if (session.socket_id) {
+        const existing = io.sockets.sockets.get(session.socket_id);
+        if (existing && existing.connected && session.socket_id !== socket.id) {
+          socket.emit("error_msg", {
+            code:    "SESSION_IN_USE",
+            message: "このオーバーレイは別の接続で開かれています。元の OBS ブラウザを閉じてから再試行してください。",
+          });
+          socket.disconnect(true);
+          return;
+        }
+      }
+      await ActiveSessionDB.updateSocketIdByTokenHash(session.token_hash, socket.id);
+      io.to(socket.id).emit("auth_success", {
+        key:          session.aes_key,
+        maxComments:  session.max_comments,
+        resumeToken:  resume,
+      });
+      console.log(`[manager] セッション再開: socketId=${socket.id}`);
+
+      socket.on("disconnect", async (reason) => {
+        console.log(`[manager] 切断: socketId=${socket.id} reason=${reason}`);
+        if (shuttingDown) return;
+        await ActiveSessionDB.removeBySocketId(socket.id);
+      });
+      return;
+    }
+
     const token = socket.handshake.query.token;
-    const isValidTokenFormat = typeof token === "string" && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(token);
+    const isValidTokenFormat = typeof token === "string"
+      && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(token);
 
     if (!isValidTokenFormat) {
       socket.emit("error_msg", { code: "INVALID_TOKEN_FORMAT", message: "トークン形式が不正です" });
@@ -87,7 +133,6 @@ export function initSocketManager(io) {
       return;
     }
 
-    // 同一待機トークンを別クライアントが同時に使えないようにする（古い接続が生きている間は拒否）
     if (pending.socket_id) {
       const existing = io.sockets.sockets.get(pending.socket_id);
       if (existing && existing.connected && pending.socket_id !== socket.id) {
@@ -133,6 +178,7 @@ export function initSocketManager(io) {
 
     socket.on("disconnect", async (reason) => {
       console.log(`[manager] 切断: socketId=${socket.id} reason=${reason}`);
+      if (shuttingDown) return;
       await Promise.all([
         PendingAuthDB.removeBySocketId(socket.id),
         ActiveSessionDB.removeBySocketId(socket.id),

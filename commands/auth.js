@@ -1,6 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from "discord.js";
 import { PendingAuthDB, ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
-import { generateAesKey } from "../utils/crypto.js";
+import { generateAesKey, hashToken } from "../utils/crypto.js";
 
 export const data = new SlashCommandBuilder()
   .setName("auth")
@@ -14,11 +15,11 @@ export const data = new SlashCommandBuilder()
       .setMaxLength(6),
   );
 
-/** @type {((socketId: string, aesKey: string, maxComments: number) => void) | null} */
+/** @type {((socketId: string, aesKey: string, maxComments: number, resumeToken: string) => void) | null} */
 let distributeKeyFn = null;
 
 /**
- * @param {(socketId: string, aesKey: string, maxComments: number) => void} fn
+ * @param {(socketId: string, aesKey: string, maxComments: number, resumeToken: string) => void} fn
  */
 export function setDistributeKeyFn(fn) {
   distributeKeyFn = fn;
@@ -94,24 +95,26 @@ export async function execute(interaction) {
   // 認証成功 → 試行カウントをリセット
   authAttempts.delete(userId);
 
-  const aesKey      = generateAesKey();
-  const maxComments = pending.max_comments;
+  const aesKey       = generateAesKey();
+  const maxComments  = pending.max_comments;
+  const resumeToken  = randomBytes(32).toString("hex");
 
   await ActiveSessionDB.add({
-    token:        pending.token,
-    socket_id:    pending.socket_id,
-    user_id:      userId,
-    channel_id:   pending.channel_id,
-    aes_key:      aesKey,
-    created_at:   Date.now(),
-    max_comments: maxComments,
+    token_hash:        pending.token_hash,
+    socket_id:         pending.socket_id,
+    user_id:           userId,
+    channel_id:        pending.channel_id,
+    aes_key:           aesKey,
+    created_at:        Date.now(),
+    max_comments:      maxComments,
+    resume_token_hash: hashToken(resumeToken),
   });
 
   await PendingAuthDB.removeByUserId(userId);
 
   // AES鍵と上限値をクライアントへ配布
   if (distributeKeyFn) {
-    distributeKeyFn(pending.socket_id, aesKey, maxComments);
+    distributeKeyFn(pending.socket_id, aesKey, maxComments, resumeToken);
   } else {
     console.error("[auth] distributeKeyFn が未登録です");
   }

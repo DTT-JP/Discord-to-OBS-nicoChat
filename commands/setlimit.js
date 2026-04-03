@@ -49,15 +49,17 @@ export async function execute(interaction) {
     });
   }
 
-  // DB 更新
-  await ActiveSessionDB.updateMaxComments(session.socket_id, maxComments);
+  // DB 更新（PM2 リロード直後は socket_id が空の可能性があるためユーザー単位で更新）
+  await ActiveSessionDB.updateMaxCommentsForUser(userId, maxComments);
+  const refreshed = ActiveSessionDB.findByUserId(userId);
 
   // クライアントへリアルタイム通知
-  if (updateLimitFn) {
-    updateLimitFn(session.socket_id, maxComments);
-  } else {
+  if (updateLimitFn && refreshed?.socket_id) {
+    updateLimitFn(refreshed.socket_id, maxComments);
+  } else if (!updateLimitFn) {
     console.error("[setlimit] updateLimitFn が未登録です");
   }
+  // socket 未接続時は DB のみ更新（再接続後は初期値で上書きされないよう保持）
 
   return interaction.editReply({
     content: `✅ 同時表示上限を **${maxComments}件** に変更しました。`,

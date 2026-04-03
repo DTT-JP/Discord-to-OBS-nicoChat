@@ -1,19 +1,21 @@
+import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { JSONFilePreset } from "lowdb/node";
-import { hashToken, hashAuthCode, secureEqualHex } from "./utils/crypto.js";
+import Database from "better-sqlite3";
+import { hashToken, hashAuthCode, secureEqualHex, encrypt, decrypt } from "./utils/crypto.js";
+import { deriveGuildSettingsKeyHex } from "./utils/deriveGuildKey.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DB_PATH   = join(__dirname, "db.json");
+const __dirname   = dirname(fileURLToPath(import.meta.url));
+const SQLITE_PATH = join(__dirname, "app.db");
+const LEGACY_JSON = join(__dirname, "db.json");
 
 /** @typedef {{ type: "role"|"user", id: string, guild_id: string }} Principal */
 /** @typedef {{ type: "role"|"user", id: string, guild_id: string }} SetupPrincipal */
 /** @typedef {{ guild_id: string, channel_id: string, added_by: string, added_at: number }} DenyChannel */
-/** @typedef {{ guild_id: string, blacklist_status_enabled: boolean, blacklist_appeal_url: string }} GuildSetting */
+/** @typedef {{ guild_id: string, blacklist_status_enabled: boolean, blacklist_appeal_url: string }} GuildSettingPlain */
 
 /**
  * @typedef {Object} PendingAuth
- * @property {string} token
  * @property {string} token_hash
  * @property {string} socket_id
  * @property {string} user_id
@@ -25,7 +27,6 @@ const DB_PATH   = join(__dirname, "db.json");
 
 /**
  * @typedef {Object} ActiveSession
- * @property {string} token
  * @property {string} token_hash
  * @property {string} socket_id
  * @property {string} user_id
@@ -33,84 +34,216 @@ const DB_PATH   = join(__dirname, "db.json");
  * @property {string} aes_key
  * @property {number} created_at
  * @property {number} max_comments
+ * @property {string|null} [resume_token_hash]
  */
+
+const db = new Database(SQLITE_PATH);
+db.pragma("journal_mode = WAL");
+db.pragma("synchronous = FULL");
+db.pragma("foreign_keys = ON");
+db.pragma("busy_timeout = 8000");
+
+function initSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pending_auths (
+      token_hash   TEXT PRIMARY KEY,
+      socket_id    TEXT NOT NULL DEFAULT '',
+      user_id      TEXT NOT NULL,
+      channel_id   TEXT NOT NULL,
+      code_hash    TEXT NOT NULL DEFAULT '',
+      expires_at   INTEGER NOT NULL,
+      max_comments INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS active_sessions (
+      token_hash        TEXT PRIMARY KEY,
+      socket_id         TEXT NOT NULL DEFAULT '',
+      user_id           TEXT NOT NULL,
+      channel_id        TEXT NOT NULL,
+      aes_key           TEXT NOT NULL,
+      created_at        INTEGER NOT NULL,
+      max_comments      INTEGER NOT NULL,
+      resume_token_hash TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS allowed_principals (
+      type     TEXT NOT NULL,
+      id       TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      PRIMARY KEY (type, id, guild_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS setup_principals (
+      type     TEXT NOT NULL,
+      id       TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      PRIMARY KEY (type, id, guild_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS deny_channels (
+      guild_id   TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      added_by   TEXT NOT NULL,
+      added_at   INTEGER NOT NULL,
+      PRIMARY KEY (guild_id, channel_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS guild_settings (
+      guild_id             TEXT PRIMARY KEY,
+      settings_ciphertext  TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS global_blacklist (
+      user_id            TEXT PRIMARY KEY,
+      added_by           TEXT NOT NULL,
+      added_at           INTEGER NOT NULL,
+      reason             TEXT NOT NULL DEFAULT '',
+      expires_at         INTEGER,
+      added_in_guild_id  TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS local_blacklist (
+      user_id    TEXT NOT NULL,
+      guild_id   TEXT NOT NULL,
+      added_by   TEXT NOT NULL,
+      added_at   INTEGER NOT NULL,
+      reason     TEXT NOT NULL DEFAULT '',
+      expires_at INTEGER,
+      PRIMARY KEY (user_id, guild_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pending_user    ON pending_auths(user_id);
+    CREATE INDEX IF NOT EXISTS idx_pending_socket   ON pending_auths(socket_id);
+    CREATE INDEX IF NOT EXISTS idx_active_user      ON active_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_active_channel   ON active_sessions(channel_id);
+    CREATE INDEX IF NOT EXISTS idx_active_socket     ON active_sessions(socket_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_active_resume
+      ON active_sessions(resume_token_hash)
+      WHERE resume_token_hash IS NOT NULL AND resume_token_hash != '';
+  `);
+}
+
+initSchema();
 
 /**
- * @typedef {Object} GlobalBlacklistEntry
- * @property {string} user_id   - ブラックリスト対象のDiscordユーザーID
- * @property {string} added_by  - 追加したユーザーのID
- * @property {number} added_at  - 追加日時（Unix ms）
- * @property {string} reason    - 追加理由
- * @property {number|null} expires_at - 期限（Unix ms）null は無期限
- * @property {string} added_in_guild_id - 施行サーバー
+ * lowdb の db.json を一度だけ SQLite へ取り込む（トランザクション）
  */
+export function migrateLegacyJsonIfNeeded() {
+  const nP = /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM pending_auths").get()).c;
+  const nA = /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM active_sessions").get()).c;
+  if (nP > 0 || nA > 0) return;
+  if (!existsSync(LEGACY_JSON)) return;
 
-/**
- * @typedef {Object} LocalBlacklistEntry
- * @property {string} user_id   - ブラックリスト対象のDiscordユーザーID
- * @property {string} guild_id  - 対象のサーバーID
- * @property {string} added_by  - 追加したユーザーのID
- * @property {number} added_at  - 追加日時（Unix ms）
- * @property {string} reason    - 追加理由
- * @property {number|null} expires_at - 期限（Unix ms）null は無期限
- */
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(LEGACY_JSON, "utf8"));
+  } catch {
+    console.warn("[database] db.json の読み込みに失敗しました（移行スキップ）");
+    return;
+  }
 
-/**
- * @typedef {Object} DbSchema
- * @property {PendingAuth[]}          pending_auths
- * @property {ActiveSession[]}        active_sessions
- * @property {Principal[]}            allowed_principals
- * @property {SetupPrincipal[]}       setup_principals
- * @property {DenyChannel[]}          deny_channels
- * @property {GuildSetting[]}         guild_settings
- * @property {GlobalBlacklistEntry[]} global_blacklist
- * @property {LocalBlacklistEntry[]}  local_blacklist
- */
+  const txn = db.transaction(() => {
+    for (const r of raw.pending_auths ?? []) {
+      const th = r.token_hash || (r.token ? hashToken(r.token) : "");
+      if (!th) continue;
+      db.prepare(
+        `INSERT OR IGNORE INTO pending_auths
+         (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).run(
+        th,
+        r.socket_id ?? "",
+        r.user_id,
+        r.channel_id,
+        r.code_hash || (r.code ? hashAuthCode(r.code, r.user_id) : ""),
+        r.expires_at,
+        r.max_comments ?? 30,
+      );
+    }
 
-/** @type {DbSchema} */
-const DEFAULT_DATA = {
-  pending_auths:      [],
-  active_sessions:    [],
-  allowed_principals: [],
-  setup_principals:   [],
-  deny_channels:      [],
-  guild_settings:     [],
-  global_blacklist:   [],
-  local_blacklist:    [],
-};
+    for (const r of raw.active_sessions ?? []) {
+      const th = r.token_hash || (r.token ? hashToken(r.token) : "");
+      if (!th) continue;
+      db.prepare(
+        `INSERT OR IGNORE INTO active_sessions
+         (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, resume_token_hash)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      ).run(
+        th,
+        r.socket_id ?? "",
+        r.user_id,
+        r.channel_id,
+        r.aes_key,
+        r.created_at ?? Date.now(),
+        r.max_comments ?? 30,
+        r.resume_token_hash ?? null,
+      );
+    }
 
-const db = await JSONFilePreset(DB_PATH, DEFAULT_DATA);
+    for (const p of raw.allowed_principals ?? []) {
+      db.prepare(
+        `INSERT OR IGNORE INTO allowed_principals (type, id, guild_id) VALUES (?,?,?)`,
+      ).run(p.type, p.id, p.guild_id);
+    }
 
-// ── マイグレーション ────────────────────────────
-// 旧 blacklist キーを global_blacklist へ移行
-if (db.data.blacklist && !db.data.global_blacklist?.length) {
-  db.data.global_blacklist = db.data.blacklist.map((e) => ({
-    user_id:  e.user_id,
-    added_by: e.added_by,
-    added_at: e.added_at,
-  }));
-  delete db.data.blacklist;
-  await db.write();
-} else if (!db.data.global_blacklist) {
-  db.data.global_blacklist = [];
-  await db.write();
-}
+    for (const p of raw.setup_principals ?? []) {
+      db.prepare(
+        `INSERT OR IGNORE INTO setup_principals (type, id, guild_id) VALUES (?,?,?)`,
+      ).run(p.type, p.id, p.guild_id);
+    }
 
-if (!db.data.local_blacklist) {
-  db.data.local_blacklist = [];
-  await db.write();
-}
-if (!db.data.setup_principals) {
-  db.data.setup_principals = [];
-  await db.write();
-}
-if (!db.data.deny_channels) {
-  db.data.deny_channels = [];
-  await db.write();
-}
-if (!db.data.guild_settings) {
-  db.data.guild_settings = [];
-  await db.write();
+    for (const e of raw.deny_channels ?? []) {
+      db.prepare(
+        `INSERT OR IGNORE INTO deny_channels (guild_id, channel_id, added_by, added_at) VALUES (?,?,?,?)`,
+      ).run(e.guild_id, e.channel_id, e.added_by, e.added_at);
+    }
+
+    for (const s of raw.guild_settings ?? []) {
+      const gid = s.guild_id;
+      const keyHex = deriveGuildSettingsKeyHex(gid);
+      const payload = JSON.stringify({
+        blacklist_status_enabled: !!s.blacklist_status_enabled,
+        blacklist_appeal_url:     String(s.blacklist_appeal_url ?? ""),
+      });
+      const ct = encrypt(payload, keyHex);
+      db.prepare(
+        `INSERT OR IGNORE INTO guild_settings (guild_id, settings_ciphertext) VALUES (?,?)`,
+      ).run(gid, ct);
+    }
+
+    for (const e of raw.global_blacklist ?? []) {
+      db.prepare(
+        `INSERT OR IGNORE INTO global_blacklist
+         (user_id, added_by, added_at, reason, expires_at, added_in_guild_id)
+         VALUES (?,?,?,?,?,?)`,
+      ).run(
+        e.user_id,
+        e.added_by,
+        e.added_at,
+        e.reason ?? "",
+        e.expires_at ?? null,
+        e.added_in_guild_id ?? "",
+      );
+    }
+
+    for (const e of raw.local_blacklist ?? []) {
+      db.prepare(
+        `INSERT OR IGNORE INTO local_blacklist
+         (user_id, guild_id, added_by, added_at, reason, expires_at)
+         VALUES (?,?,?,?,?,?)`,
+      ).run(
+        e.user_id,
+        e.guild_id,
+        e.added_by,
+        e.added_at,
+        e.reason ?? "",
+        e.expires_at ?? null,
+      );
+    }
+  });
+
+  txn();
+  console.log("[database] db.json から SQLite への移行を完了しました");
 }
 
 // ─────────────────────────────────────────────
@@ -118,64 +251,76 @@ if (!db.data.guild_settings) {
 // ─────────────────────────────────────────────
 
 export const PendingAuthDB = {
+  /**
+   * @param {Omit<PendingAuth, "token_hash"> & { token: string, code?: string }} record
+   */
   add(record) {
-    record.token_hash = hashToken(record.token);
-    record.code_hash  = record.code ? hashAuthCode(record.code, record.user_id) : "";
-    record.token      = "";
-    record.code       = "";
-    db.data.pending_auths.push(record);
-    return db.write();
+    const tokenHash = hashToken(record.token);
+    const codeHash  = record.code ? hashAuthCode(record.code, record.user_id) : "";
+    const run = db.transaction(() => {
+      db.prepare(
+        `INSERT INTO pending_auths
+         (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).run(
+        tokenHash,
+        record.socket_id ?? "",
+        record.user_id,
+        record.channel_id,
+        codeHash,
+        record.expires_at,
+        record.max_comments,
+      );
+    });
+    run();
+    return Promise.resolve();
   },
   findByToken(token) {
     const tokenHash = hashToken(token);
-    return db.data.pending_auths.find((r) =>
-      secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
-    );
+    const row = db.prepare("SELECT * FROM pending_auths WHERE token_hash = ?").get(tokenHash);
+    return row ?? undefined;
   },
   findBySocketId(socketId) {
-    return db.data.pending_auths.find((r) => r.socket_id === socketId);
+    return db.prepare("SELECT * FROM pending_auths WHERE socket_id = ?").get(socketId) ?? undefined;
   },
   findByUserId(userId) {
-    return db.data.pending_auths.find((r) => r.user_id === userId);
+    return db.prepare("SELECT * FROM pending_auths WHERE user_id = ?").get(userId) ?? undefined;
   },
   findByCodeAndUser(code, userId) {
     const codeHash = hashAuthCode(code, userId);
-    return db.data.pending_auths.find((r) => {
-      if (r.user_id !== userId) return false;
-      const recordHash = r.code_hash || (r.code ? hashAuthCode(r.code, r.user_id) : "");
-      return secureEqualHex(recordHash, codeHash);
-    });
+    const rows     = db.prepare("SELECT * FROM pending_auths WHERE user_id = ?").all(userId);
+    return rows.find((r) => secureEqualHex(r.code_hash || "", codeHash));
   },
   removeByToken(token) {
     const tokenHash = hashToken(token);
-    db.data.pending_auths = db.data.pending_auths.filter(
-      (r) => !secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
-    );
-    return db.write();
+    db.prepare("DELETE FROM pending_auths WHERE token_hash = ?").run(tokenHash);
+    return Promise.resolve();
   },
   removeBySocketId(socketId) {
-    db.data.pending_auths = db.data.pending_auths.filter((r) => r.socket_id !== socketId);
-    return db.write();
+    db.prepare("DELETE FROM pending_auths WHERE socket_id = ?").run(socketId);
+    return Promise.resolve();
   },
   removeByUserId(userId) {
-    db.data.pending_auths = db.data.pending_auths.filter((r) => r.user_id !== userId);
-    return db.write();
+    db.prepare("DELETE FROM pending_auths WHERE user_id = ?").run(userId);
+    return Promise.resolve();
   },
   removeExpired() {
     const now = Date.now();
-    db.data.pending_auths = db.data.pending_auths.filter((r) => r.expires_at > now);
-    return db.write();
+    db.prepare("DELETE FROM pending_auths WHERE expires_at <= ?").run(now);
+    return Promise.resolve();
   },
   updateSocketAndCode(token, socketId, code) {
     const tokenHash = hashToken(token);
-    const record = db.data.pending_auths.find((r) =>
-      secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
-    );
-    if (!record) return Promise.resolve();
-    record.socket_id = socketId;
-    record.code_hash = hashAuthCode(code, record.user_id);
-    record.code      = "";
-    return db.write();
+    const run = db.transaction(() => {
+      const row = db.prepare("SELECT user_id FROM pending_auths WHERE token_hash = ?").get(tokenHash);
+      if (!row) return;
+      const codeHash = hashAuthCode(code, row.user_id);
+      db.prepare(
+        `UPDATE pending_auths SET socket_id = ?, code_hash = ? WHERE token_hash = ?`,
+      ).run(socketId, codeHash, tokenHash);
+    });
+    run();
+    return Promise.resolve();
   },
 };
 
@@ -184,50 +329,83 @@ export const PendingAuthDB = {
 // ─────────────────────────────────────────────
 
 export const ActiveSessionDB = {
+  /**
+   * @param {Omit<ActiveSession, "token_hash"> & { token?: string, token_hash?: string, resume_token_hash?: string }} record
+   */
   add(record) {
-    record.token_hash = hashToken(record.token);
-    record.token      = "";
-    db.data.active_sessions.push(record);
-    return db.write();
+    const tokenHash = record.token_hash || hashToken(record.token || "");
+    const run = db.transaction(() => {
+      db.prepare(
+        `INSERT INTO active_sessions
+         (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, resume_token_hash)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      ).run(
+        tokenHash,
+        record.socket_id ?? "",
+        record.user_id,
+        record.channel_id,
+        record.aes_key,
+        record.created_at,
+        record.max_comments,
+        record.resume_token_hash ?? null,
+      );
+    });
+    run();
+    return Promise.resolve();
   },
   findByToken(token) {
     const tokenHash = hashToken(token);
-    return db.data.active_sessions.find((r) =>
-      secureEqualHex(r.token_hash || hashToken(r.token || ""), tokenHash),
-    );
+    return db.prepare("SELECT * FROM active_sessions WHERE token_hash = ?").get(tokenHash) ?? undefined;
   },
   findBySocketId(socketId) {
-    return db.data.active_sessions.find((r) => r.socket_id === socketId);
+    if (!socketId) return undefined;
+    return db.prepare("SELECT * FROM active_sessions WHERE socket_id = ?").get(socketId) ?? undefined;
   },
   findByUserId(userId) {
-    return db.data.active_sessions.find((r) => r.user_id === userId);
+    return db.prepare("SELECT * FROM active_sessions WHERE user_id = ?").get(userId) ?? undefined;
+  },
+  /** @param {string} resumePlain 64 hex */
+  findByResumeToken(resumePlain) {
+    const h = hashToken(resumePlain);
+    return db.prepare("SELECT * FROM active_sessions WHERE resume_token_hash = ?").get(h) ?? undefined;
   },
   findByChannelId(channelId) {
-    return db.data.active_sessions.filter((r) => r.channel_id === channelId);
+    return db.prepare("SELECT * FROM active_sessions WHERE channel_id = ?").all(channelId);
   },
   findAll() {
-    return [...db.data.active_sessions];
+    return db.prepare("SELECT * FROM active_sessions").all();
   },
   count() {
-    return db.data.active_sessions.length;
+    return /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM active_sessions").get()).c;
   },
   removeBySocketId(socketId) {
-    db.data.active_sessions = db.data.active_sessions.filter((r) => r.socket_id !== socketId);
-    return db.write();
+    if (!socketId) return Promise.resolve();
+    db.prepare("DELETE FROM active_sessions WHERE socket_id = ?").run(socketId);
+    return Promise.resolve();
   },
   removeByUserId(userId) {
-    db.data.active_sessions = db.data.active_sessions.filter((r) => r.user_id !== userId);
-    return db.write();
+    db.prepare("DELETE FROM active_sessions WHERE user_id = ?").run(userId);
+    return Promise.resolve();
   },
   removeAll() {
-    db.data.active_sessions = [];
-    return db.write();
+    db.prepare("DELETE FROM active_sessions").run();
+    return Promise.resolve();
   },
   updateMaxComments(socketId, maxComments) {
-    const record = db.data.active_sessions.find((r) => r.socket_id === socketId);
-    if (!record) return Promise.resolve();
-    record.max_comments = maxComments;
-    return db.write();
+    if (!socketId) return Promise.resolve();
+    db.prepare("UPDATE active_sessions SET max_comments = ? WHERE socket_id = ?").run(maxComments, socketId);
+    return Promise.resolve();
+  },
+  /**
+   * PM2 リロード直後など socket_id が空でもユーザー単位で上限を更新する
+   */
+  updateMaxCommentsForUser(userId, maxComments) {
+    db.prepare("UPDATE active_sessions SET max_comments = ? WHERE user_id = ?").run(maxComments, userId);
+    return Promise.resolve();
+  },
+  updateSocketIdByTokenHash(tokenHash, socketId) {
+    db.prepare("UPDATE active_sessions SET socket_id = ? WHERE token_hash = ?").run(socketId, tokenHash);
+    return Promise.resolve();
   },
 };
 
@@ -237,34 +415,37 @@ export const ActiveSessionDB = {
 
 export const AllowedPrincipalDB = {
   add(type, id, guildId) {
-    const exists = db.data.allowed_principals.some(
-      (p) => p.type === type && p.id === id && p.guild_id === guildId,
-    );
-    if (exists) return Promise.resolve();
-    db.data.allowed_principals.push({ type, id, guild_id: guildId });
-    return db.write();
+    const run = db.transaction(() => {
+      db.prepare(
+        `INSERT OR IGNORE INTO allowed_principals (type, id, guild_id) VALUES (?,?,?)`,
+      ).run(type, id, guildId);
+    });
+    run();
+    return Promise.resolve();
   },
   remove(type, id, guildId) {
-    db.data.allowed_principals = db.data.allowed_principals.filter(
-      (p) => !(p.type === type && p.id === id && p.guild_id === guildId),
-    );
-    return db.write();
+    db.prepare(
+      `DELETE FROM allowed_principals WHERE type = ? AND id = ? AND guild_id = ?`,
+    ).run(type, id, guildId);
+    return Promise.resolve();
   },
   findByGuild(guildId) {
-    return db.data.allowed_principals.filter((p) => p.guild_id === guildId);
+    return db.prepare(
+      "SELECT type, id, guild_id FROM allowed_principals WHERE guild_id = ?",
+    ).all(guildId);
   },
   /**
-   * GuildMember が /start 実行権限を持つか判定
    * @param {import("discord.js").GuildMember} member
-   * @returns {boolean}
    */
   isAllowed(member) {
     const guildId    = member.guild.id;
-    const principals = db.data.allowed_principals.filter((p) => p.guild_id === guildId);
+    const principals = db.prepare(
+      "SELECT type, id FROM allowed_principals WHERE guild_id = ?",
+    ).all(guildId);
     if (principals.length === 0) return false;
     for (const p of principals) {
-      if (p.type === "user" && p.id === member.id)             return true;
-      if (p.type === "role" && member.roles.cache.has(p.id))   return true;
+      if (p.type === "user" && p.id === member.id)           return true;
+      if (p.type === "role" && member.roles.cache.has(p.id)) return true;
     }
     return false;
   },
@@ -272,27 +453,32 @@ export const AllowedPrincipalDB = {
 
 export const SetupPrincipalDB = {
   add(type, id, guildId) {
-    const exists = db.data.setup_principals.some(
-      (p) => p.type === type && p.id === id && p.guild_id === guildId,
-    );
-    if (exists) return Promise.resolve();
-    db.data.setup_principals.push({ type, id, guild_id: guildId });
-    return db.write();
+    const run = db.transaction(() => {
+      db.prepare(
+        `INSERT OR IGNORE INTO setup_principals (type, id, guild_id) VALUES (?,?,?)`,
+      ).run(type, id, guildId);
+    });
+    run();
+    return Promise.resolve();
   },
   remove(type, id, guildId) {
-    db.data.setup_principals = db.data.setup_principals.filter(
-      (p) => !(p.type === type && p.id === id && p.guild_id === guildId),
-    );
-    return db.write();
+    db.prepare(
+      `DELETE FROM setup_principals WHERE type = ? AND id = ? AND guild_id = ?`,
+    ).run(type, id, guildId);
+    return Promise.resolve();
   },
   findByGuild(guildId) {
-    return db.data.setup_principals.filter((p) => p.guild_id === guildId);
+    return db.prepare(
+      "SELECT type, id, guild_id FROM setup_principals WHERE guild_id = ?",
+    ).all(guildId);
   },
   isAllowed(member) {
     const guildId = member.guild.id;
-    const principals = db.data.setup_principals.filter((p) => p.guild_id === guildId);
+    const principals = db.prepare(
+      "SELECT type, id FROM setup_principals WHERE guild_id = ?",
+    ).all(guildId);
     for (const p of principals) {
-      if (p.type === "user" && p.id === member.id) return true;
+      if (p.type === "user" && p.id === member.id)           return true;
       if (p.type === "role" && member.roles.cache.has(p.id)) return true;
     }
     return false;
@@ -301,194 +487,221 @@ export const SetupPrincipalDB = {
 
 export const DenyChannelDB = {
   add(guildId, channelId, addedBy) {
-    const exists = db.data.deny_channels.some(
-      (e) => e.guild_id === guildId && e.channel_id === channelId,
-    );
-    if (exists) return Promise.resolve(false);
-    db.data.deny_channels.push({
-      guild_id: guildId,
-      channel_id: channelId,
-      added_by: addedBy,
-      added_at: Date.now(),
+    let ok = false;
+    const txn = db.transaction(() => {
+      const exists = db.prepare(
+        "SELECT 1 FROM deny_channels WHERE guild_id = ? AND channel_id = ?",
+      ).get(guildId, channelId);
+      if (exists) return;
+      db.prepare(
+        `INSERT INTO deny_channels (guild_id, channel_id, added_by, added_at) VALUES (?,?,?,?)`,
+      ).run(guildId, channelId, addedBy, Date.now());
+      ok = true;
     });
-    return db.write().then(() => true);
+    txn();
+    return Promise.resolve(ok);
   },
   remove(guildId, channelId) {
-    const before = db.data.deny_channels.length;
-    db.data.deny_channels = db.data.deny_channels.filter(
-      (e) => !(e.guild_id === guildId && e.channel_id === channelId),
-    );
-    if (db.data.deny_channels.length === before) return Promise.resolve(false);
-    return db.write().then(() => true);
+    const info = db.prepare(
+      "DELETE FROM deny_channels WHERE guild_id = ? AND channel_id = ?",
+    ).run(guildId, channelId);
+    return Promise.resolve(info.changes > 0);
   },
   has(guildId, channelId) {
-    return db.data.deny_channels.some(
-      (e) => e.guild_id === guildId && e.channel_id === channelId,
-    );
+    return !!db.prepare(
+      "SELECT 1 FROM deny_channels WHERE guild_id = ? AND channel_id = ?",
+    ).get(guildId, channelId);
   },
   findByGuild(guildId) {
-    return db.data.deny_channels.filter((e) => e.guild_id === guildId);
+    return db.prepare(
+      "SELECT guild_id, channel_id, added_by, added_at FROM deny_channels WHERE guild_id = ?",
+    ).all(guildId);
   },
 };
+
+const GUILD_DEFAULT = (guildId) => ({
+  guild_id:                 guildId,
+  blacklist_status_enabled: false,
+  blacklist_appeal_url:     "",
+});
 
 export const GuildSettingDB = {
+  /**
+   * @param {string} guildId
+   * @returns {GuildSettingPlain & { guild_id: string }}
+   */
   find(guildId) {
-    return db.data.guild_settings.find((s) => s.guild_id === guildId)
-      ?? { guild_id: guildId, blacklist_status_enabled: false, blacklist_appeal_url: "" };
-  },
-  async upsert(guildId, patch) {
-    const existing = db.data.guild_settings.find((s) => s.guild_id === guildId);
-    if (existing) {
-      Object.assign(existing, patch);
-    } else {
-      db.data.guild_settings.push({
-        guild_id: guildId,
-        blacklist_status_enabled: false,
-        blacklist_appeal_url: "",
-        ...patch,
-      });
+    const row = db.prepare(
+      "SELECT settings_ciphertext FROM guild_settings WHERE guild_id = ?",
+    ).get(guildId);
+    if (!row) return GUILD_DEFAULT(guildId);
+    try {
+      const keyHex = deriveGuildSettingsKeyHex(guildId);
+      const plain  = decrypt(row.settings_ciphertext, keyHex);
+      const o      = JSON.parse(plain);
+      return {
+        guild_id:                 guildId,
+        blacklist_status_enabled: !!o.blacklist_status_enabled,
+        blacklist_appeal_url:     String(o.blacklist_appeal_url ?? ""),
+      };
+    } catch {
+      console.warn(`[GuildSettingDB] 復号に失敗したためデフォルトを使用します (guild ${guildId.slice(0, 8)}…)`);
+      return GUILD_DEFAULT(guildId);
     }
-    await db.write();
-    return this.find(guildId);
+  },
+  /**
+   * @param      {string} guildId
+   * @param      {Partial<GuildSettingPlain>} patch
+   * @returns {Promise<GuildSettingPlain & { guild_id: string }>}
+   */
+  async upsert(guildId, patch) {
+    const cur = this.find(guildId);
+    const next = {
+      ...cur,
+      ...patch,
+      guild_id: guildId,
+    };
+    const keyHex = deriveGuildSettingsKeyHex(guildId);
+    const payload = JSON.stringify({
+      blacklist_status_enabled: next.blacklist_status_enabled,
+      blacklist_appeal_url:     next.blacklist_appeal_url,
+    });
+    const ct = encrypt(payload, keyHex);
+    const txn = db.transaction(() => {
+      db.prepare(
+        `INSERT INTO guild_settings (guild_id, settings_ciphertext) VALUES (?,?)
+         ON CONFLICT(guild_id) DO UPDATE SET settings_ciphertext = excluded.settings_ciphertext`,
+      ).run(guildId, ct);
+    });
+    txn();
+    return next;
   },
 };
 
-// ─────────────────────────────────────────────
-// GlobalBlacklist CRUD（全サーバー共通）
-// ─────────────────────────────────────────────
-
 export const GlobalBlacklistDB = {
-  /**
-   * ユーザーをグローバルブラックリストに追加
-   * @param {string} userId
-   * @param {string} addedBy
-   * @returns {Promise<boolean>} 追加できたら true
-   */
   add(userId, addedBy, reason = "", expiresAt = null, addedInGuildId = "") {
-    const exists = db.data.global_blacklist.some((e) => e.user_id === userId);
-    if (exists) return Promise.resolve(false);
-    db.data.global_blacklist.push({
-      user_id: userId,
-      added_by: addedBy,
-      added_at: Date.now(),
-      reason,
-      expires_at: expiresAt,
-      added_in_guild_id: addedInGuildId,
+    let ok = false;
+    const txn = db.transaction(() => {
+      const exists = db.prepare("SELECT 1 FROM global_blacklist WHERE user_id = ?").get(userId);
+      if (exists) return;
+      db.prepare(
+        `INSERT INTO global_blacklist
+         (user_id, added_by, added_at, reason, expires_at, added_in_guild_id)
+         VALUES (?,?,?,?,?,?)`,
+      ).run(userId, addedBy, Date.now(), reason, expiresAt, addedInGuildId);
+      ok = true;
     });
-    return db.write().then(() => true);
+    txn();
+    return Promise.resolve(ok);
   },
-
-  /**
-   * @param {string} userId
-   * @returns {Promise<boolean>} 削除できたら true
-   */
   remove(userId) {
-    const before = db.data.global_blacklist.length;
-    db.data.global_blacklist = db.data.global_blacklist.filter((e) => e.user_id !== userId);
-    if (db.data.global_blacklist.length === before) return Promise.resolve(false);
-    return db.write().then(() => true);
+    const info = db.prepare("DELETE FROM global_blacklist WHERE user_id = ?").run(userId);
+    return Promise.resolve(info.changes > 0);
   },
-
-  /**
-   * @param {string} userId
-   * @returns {boolean}
-   */
   has(userId) {
     const now = Date.now();
-    return db.data.global_blacklist.some((e) => (
-      e.user_id === userId && (e.expires_at == null || e.expires_at > now)
-    ));
+    const row = db.prepare(
+      "SELECT expires_at FROM global_blacklist WHERE user_id = ?",
+    ).get(userId);
+    if (!row) return false;
+    return row.expires_at == null || row.expires_at > now;
   },
-
-  /** @returns {GlobalBlacklistEntry[]} */
   findAll() {
     const now = Date.now();
-    return db.data.global_blacklist.filter((e) => e.expires_at == null || e.expires_at > now);
+    return db.prepare(
+      "SELECT * FROM global_blacklist WHERE expires_at IS NULL OR expires_at > ?",
+    ).all(now);
   },
   find(userId) {
     const now = Date.now();
-    return db.data.global_blacklist.find((e) => (
-      e.user_id === userId && (e.expires_at == null || e.expires_at > now)
-    ));
+    return db.prepare(
+      "SELECT * FROM global_blacklist WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+    ).get(userId, now);
   },
 };
 
-// ─────────────────────────────────────────────
-// LocalBlacklist CRUD（サーバーごと）
-// ─────────────────────────────────────────────
-
 export const LocalBlacklistDB = {
-  /**
-   * ユーザーをサーバーブラックリストに追加
-   * @param {string} userId
-   * @param {string} guildId
-   * @param {string} addedBy
-   * @returns {Promise<boolean>}
-   */
   add(userId, guildId, addedBy, reason = "", expiresAt = null) {
-    const exists = db.data.local_blacklist.some(
-      (e) => e.user_id === userId && e.guild_id === guildId,
-    );
-    if (exists) return Promise.resolve(false);
-    db.data.local_blacklist.push({
-      user_id: userId,
-      guild_id: guildId,
-      added_by: addedBy,
-      added_at: Date.now(),
-      reason,
-      expires_at: expiresAt,
+    let ok = false;
+    const txn = db.transaction(() => {
+      const exists = db.prepare(
+        "SELECT 1 FROM local_blacklist WHERE user_id = ? AND guild_id = ?",
+      ).get(userId, guildId);
+      if (exists) return;
+      db.prepare(
+        `INSERT INTO local_blacklist
+         (user_id, guild_id, added_by, added_at, reason, expires_at)
+         VALUES (?,?,?,?,?,?)`,
+      ).run(userId, guildId, addedBy, Date.now(), reason, expiresAt);
+      ok = true;
     });
-    return db.write().then(() => true);
+    txn();
+    return Promise.resolve(ok);
   },
-
-  /**
-   * @param {string} userId
-   * @param {string} guildId
-   * @returns {Promise<boolean>}
-   */
   remove(userId, guildId) {
-    const before = db.data.local_blacklist.length;
-    db.data.local_blacklist = db.data.local_blacklist.filter(
-      (e) => !(e.user_id === userId && e.guild_id === guildId),
-    );
-    if (db.data.local_blacklist.length === before) return Promise.resolve(false);
-    return db.write().then(() => true);
+    const info = db.prepare(
+      "DELETE FROM local_blacklist WHERE user_id = ? AND guild_id = ?",
+    ).run(userId, guildId);
+    return Promise.resolve(info.changes > 0);
   },
-
-  /**
-   * 指定ユーザーが指定サーバーでブラックリストに登録されているか
-   * @param {string} userId
-   * @param {string} guildId
-   * @returns {boolean}
-   */
   has(userId, guildId) {
     const now = Date.now();
-    return db.data.local_blacklist.some((e) => (
-      e.user_id === userId && e.guild_id === guildId && (e.expires_at == null || e.expires_at > now)
-    ));
+    const row = db.prepare(
+      "SELECT expires_at FROM local_blacklist WHERE user_id = ? AND guild_id = ?",
+    ).get(userId, guildId);
+    if (!row) return false;
+    return row.expires_at == null || row.expires_at > now;
   },
-
-  /**
-   * サーバー内の全エントリーを取得
-   * @param {string} guildId
-   * @returns {LocalBlacklistEntry[]}
-   */
   findByGuild(guildId) {
     const now = Date.now();
-    return db.data.local_blacklist.filter((e) => (
-      e.guild_id === guildId && (e.expires_at == null || e.expires_at > now)
-    ));
+    return db.prepare(
+      "SELECT * FROM local_blacklist WHERE guild_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+    ).all(guildId, now);
   },
   find(userId, guildId) {
     const now = Date.now();
-    return db.data.local_blacklist.find((e) => (
-      e.user_id === userId && e.guild_id === guildId && (e.expires_at == null || e.expires_at > now)
-    ));
+    return db.prepare(
+      "SELECT * FROM local_blacklist WHERE user_id = ? AND guild_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+    ).get(userId, guildId, now);
   },
 };
 
-// ─────────────────────────────────────────────
-// 後方互換: 旧 BlacklistDB → GlobalBlacklistDB へのエイリアス
-// interactionCreate.js など既存コードが BlacklistDB を参照している場合に備える
-// ─────────────────────────────────────────────
 export const BlacklistDB = GlobalBlacklistDB;
+
+// ─────────────────────────────────────────────
+// PM2 / グレースフルシャットダウン用
+// ─────────────────────────────────────────────
+
+/**
+ * リロード時にソケット ID のみ無効化し、アクティブ・待機セッションの論理データは保持する
+ */
+export function flushSessionsForProcessRestart() {
+  const txn = db.transaction(() => {
+    db.prepare("UPDATE active_sessions SET socket_id = '' WHERE socket_id != ''").run();
+    db.prepare("UPDATE pending_auths SET socket_id = '' WHERE socket_id != ''").run();
+  });
+  txn();
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {
+    /* ignore */
+  }
+}
+
+export function closeDatabase() {
+  try {
+    db.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * @returns {{ pending: number, active: number }}
+ */
+export function getRestoredSessionCounts() {
+  return {
+    pending: /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM pending_auths").get()).c,
+    active:  /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM active_sessions").get()).c,
+  };
+}
