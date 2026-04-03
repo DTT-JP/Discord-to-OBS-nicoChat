@@ -1,5 +1,6 @@
 import { Events, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB } from "../database.js";
+import { safeForLog } from "../utils/logSafe.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -35,7 +36,7 @@ export async function execute(interaction, client) {
   try {
     await command.execute(interaction);
   } catch (error) {
-    console.error(`[interaction] /${interaction.commandName} 実行エラー:`, error);
+    console.error(`[interaction] /${interaction.commandName} 実行エラー:`, safeForLog(error));
     const payload = {
       content: "❌ コマンドの実行中にエラーが発生しました。",
       flags: MessageFlags.Ephemeral,

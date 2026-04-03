@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
-import { GlobalBlacklistDB, ActiveSessionDB } from "../database.js";
+import { GlobalBlacklistDB, ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
 
 /** セッションエフェクト更新関数（manager.js から注入） */
 let applySecretFn = null;
@@ -35,6 +35,15 @@ export async function execute(interaction) {
   if (GlobalBlacklistDB.has(interaction.user.id)) {
     return interaction.reply({
       content: "このBotを利用する権限がありません。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const member = interaction.member;
+  if (!member || !AllowedPrincipalDB.isAllowed(member)) {
+    return interaction.reply({
+      content:
+        "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/setup allow_role` または `/setup allow_user` での許可を依頼してください。",
       flags: MessageFlags.Ephemeral,
     });
   }
