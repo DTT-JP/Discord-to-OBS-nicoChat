@@ -14,6 +14,21 @@ export function setSocketShuttingDown(value) {
 }
 
 const RESUME_HEX_RE = /^[0-9a-fA-F]{64}$/;
+const MAX_COMMENTS_MIN = 1;
+const MAX_COMMENTS_MAX = 99999;
+const DEFAULT_MAX_COMMENTS = 30;
+
+/**
+ * @param {unknown} v
+ * @returns {number}
+ */
+function clampMaxComments(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_MAX_COMMENTS;
+  const t = Math.trunc(n);
+  if (t < MAX_COMMENTS_MIN) return DEFAULT_MAX_COMMENTS;
+  return Math.min(MAX_COMMENTS_MAX, t);
+}
 
 /**
  * @param {import("socket.io").Server} io
@@ -26,14 +41,16 @@ export function initSocketManager(io) {
 
   // ── AES鍵・上限値の配布 ──────────────────────────
   setDistributeKeyFn((socketId, aesKey, maxComments, resumeToken) => {
-    io.to(socketId).emit("auth_success", { key: aesKey, maxComments, resumeToken });
-    console.log(`[manager] auth_success: socketId=${socketId} maxComments=${maxComments}`);
+    const safeMaxComments = clampMaxComments(maxComments);
+    io.to(socketId).emit("auth_success", { key: aesKey, maxComments: safeMaxComments, resumeToken });
+    console.log(`[manager] auth_success: socketId=${socketId} maxComments=${safeMaxComments}`);
   });
 
   // ── 上限更新 ─────────────────────────────────────
   setUpdateLimitFn((socketId, maxComments) => {
-    io.to(socketId).emit("update_limit", { maxComments });
-    console.log(`[manager] update_limit: socketId=${socketId} maxComments=${maxComments}`);
+    const safeMaxComments = clampMaxComments(maxComments);
+    io.to(socketId).emit("update_limit", { maxComments: safeMaxComments });
+    console.log(`[manager] update_limit: socketId=${socketId} maxComments=${safeMaxComments}`);
   });
 
   // ── セッションエフェクト適用 ──────────────────────
@@ -103,7 +120,7 @@ export function initSocketManager(io) {
       await ActiveSessionDB.updateSocketIdByTokenHash(session.token_hash, socket.id);
       io.to(socket.id).emit("auth_success", {
         key:          session.aes_key,
-        maxComments:  session.max_comments,
+        maxComments:  clampMaxComments(session.max_comments),
         resumeToken:  resume,
       });
       console.log(`[manager] セッション再開: socketId=${socket.id}`);
@@ -111,7 +128,7 @@ export function initSocketManager(io) {
       socket.on("disconnect", async (reason) => {
         console.log(`[manager] 切断: socketId=${socket.id} reason=${reason}`);
         if (shuttingDown) return;
-        await ActiveSessionDB.removeBySocketId(socket.id);
+        await ActiveSessionDB.clearSocketIdBySocketId(socket.id);
       });
       return;
     }
@@ -181,7 +198,7 @@ export function initSocketManager(io) {
       if (shuttingDown) return;
       await Promise.all([
         PendingAuthDB.removeBySocketId(socket.id),
-        ActiveSessionDB.removeBySocketId(socket.id),
+        ActiveSessionDB.clearSocketIdBySocketId(socket.id),
       ]);
     });
   });

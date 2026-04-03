@@ -43,6 +43,22 @@ db.pragma("synchronous = FULL");
 db.pragma("foreign_keys = ON");
 db.pragma("busy_timeout = 8000");
 
+const MAX_COMMENTS_MIN = 1;
+const MAX_COMMENTS_MAX = 99999;
+const DEFAULT_MAX_COMMENTS = 30;
+
+/**
+ * @param {unknown} v
+ * @returns {number}
+ */
+function clampMaxComments(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_MAX_COMMENTS;
+  const t = Math.trunc(n);
+  if (t < MAX_COMMENTS_MIN) return DEFAULT_MAX_COMMENTS;
+  return Math.min(MAX_COMMENTS_MAX, t);
+}
+
 function initSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pending_auths (
@@ -276,7 +292,7 @@ export function migrateLegacyJsonIfNeeded() {
             String(row.channel_id),
             String(row.code_hash || (row.code ? hashAuthCode(String(row.code), uid) : "")),
             Number(row.expires_at),
-            Number(row.max_comments ?? 30),
+            clampMaxComments(row.max_comments ?? 30),
           ),
         );
       }
@@ -294,7 +310,7 @@ export function migrateLegacyJsonIfNeeded() {
             String(row.channel_id),
             String(row.aes_key),
             Number(row.created_at ?? Date.now()),
-            Number(row.max_comments ?? 30),
+            clampMaxComments(row.max_comments ?? 30),
             row.resume_token_hash != null && row.resume_token_hash !== ""
               ? String(row.resume_token_hash)
               : null,
@@ -404,6 +420,9 @@ export const PendingAuthDB = {
   add(record) {
     const tokenHash = hashToken(record.token);
     const codeHash  = record.code ? hashAuthCode(record.code, record.user_id) : "";
+    const expiresAt = Number(record.expires_at);
+    const safeExpiresAt = Number.isFinite(expiresAt) ? expiresAt : Date.now() + 10 * 60 * 1000; // フォールバック
+    const maxComments = clampMaxComments(record.max_comments);
     const run = db.transaction(() => {
       db.prepare(
         `INSERT INTO pending_auths
@@ -415,8 +434,8 @@ export const PendingAuthDB = {
         record.user_id,
         record.channel_id,
         codeHash,
-        record.expires_at,
-        record.max_comments,
+        safeExpiresAt,
+        maxComments,
       );
     });
     run();
@@ -481,6 +500,9 @@ export const ActiveSessionDB = {
    */
   add(record) {
     const tokenHash = record.token_hash || hashToken(record.token || "");
+    const maxComments = clampMaxComments(record.max_comments);
+    const createdAt = Number(record.created_at);
+    const safeCreatedAt = Number.isFinite(createdAt) ? createdAt : Date.now();
     const run = db.transaction(() => {
       db.prepare(
         `INSERT INTO active_sessions
@@ -492,8 +514,8 @@ export const ActiveSessionDB = {
         record.user_id,
         record.channel_id,
         record.aes_key,
-        record.created_at,
-        record.max_comments,
+        safeCreatedAt,
+        maxComments,
         record.resume_token_hash ?? null,
       );
     });
@@ -522,6 +544,14 @@ export const ActiveSessionDB = {
   findAll() {
     return db.prepare("SELECT * FROM active_sessions").all();
   },
+  /**
+   * @returns {string[]} 接続中（socket_id が空でない）チャンネルIDのみ
+   */
+  findDistinctConnectedChannelIds() {
+    return db.prepare(
+      "SELECT DISTINCT channel_id FROM active_sessions WHERE socket_id != ''",
+    ).all().map((r) => r.channel_id);
+  },
   count() {
     return /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM active_sessions").get()).c;
   },
@@ -529,6 +559,28 @@ export const ActiveSessionDB = {
     if (!socketId) return Promise.resolve();
     db.prepare("DELETE FROM active_sessions WHERE socket_id = ?").run(socketId);
     return Promise.resolve();
+  },
+  /**
+   * 切断時に active_sessions を削除せず `socket_id` だけ空にします。
+   * `resume_token_hash` を保持することで、リロード後も resume が可能になります。
+   * @param {string} socketId
+   */
+  clearSocketIdBySocketId(socketId) {
+    if (!socketId) return Promise.resolve(false);
+    const info = db.prepare("UPDATE active_sessions SET socket_id = '' WHERE socket_id = ?").run(socketId);
+    return Promise.resolve(info.changes > 0);
+  },
+  /**
+   * `socket_id` が空の切断セッションを古いものから削除します。
+   * @param {number} maxAgeMs
+   */
+  cleanupDisconnectedSessions(maxAgeMs) {
+    const cutoff = Date.now() - Number(maxAgeMs);
+    if (!Number.isFinite(cutoff)) return Promise.resolve(0);
+    const info = db.prepare(
+      "DELETE FROM active_sessions WHERE socket_id = '' AND created_at <= ?",
+    ).run(cutoff);
+    return Promise.resolve(info.changes);
   },
   removeByUserId(userId) {
     db.prepare("DELETE FROM active_sessions WHERE user_id = ?").run(userId);
@@ -540,14 +592,14 @@ export const ActiveSessionDB = {
   },
   updateMaxComments(socketId, maxComments) {
     if (!socketId) return Promise.resolve();
-    db.prepare("UPDATE active_sessions SET max_comments = ? WHERE socket_id = ?").run(maxComments, socketId);
+    db.prepare("UPDATE active_sessions SET max_comments = ? WHERE socket_id = ?").run(clampMaxComments(maxComments), socketId);
     return Promise.resolve();
   },
   /**
    * PM2 リロード直後など socket_id が空でもユーザー単位で上限を更新する
    */
   updateMaxCommentsForUser(userId, maxComments) {
-    db.prepare("UPDATE active_sessions SET max_comments = ? WHERE user_id = ?").run(maxComments, userId);
+    db.prepare("UPDATE active_sessions SET max_comments = ? WHERE user_id = ?").run(clampMaxComments(maxComments), userId);
     return Promise.resolve();
   },
   updateSocketIdByTokenHash(tokenHash, socketId) {

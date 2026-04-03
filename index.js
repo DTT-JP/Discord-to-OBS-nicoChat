@@ -14,6 +14,7 @@ import {
 import { createSocketServer } from "./socket/server.js";
 import { initSocketManager, setSocketShuttingDown } from "./socket/manager.js";
 import {
+  ActiveSessionDB,
   PendingAuthDB,
   migrateLegacyJsonIfNeeded,
   getRestoredSessionCounts,
@@ -198,6 +199,23 @@ const cleanupTimer = setInterval(async () => {
 
 // タイマーが Node.js プロセスの終了を妨げないようにする
 cleanupTimer.unref();
+
+// 切断後に socket_id='' となったままのセッションを削除（一定期間 resume を許容）
+const ACTIVE_DISCONNECTED_GRACE_MS = 30 * 60 * 1000; // 30分
+const ACTIVE_SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10分ごと
+
+const activeCleanupTimer = setInterval(async () => {
+  try {
+    const removed = await ActiveSessionDB.cleanupDisconnectedSessions(ACTIVE_DISCONNECTED_GRACE_MS);
+    if (removed > 0) {
+      console.log(`[cleanup] 切断済み active_sessions を削除しました: removed=${removed}`);
+    }
+  } catch (err) {
+    console.error("[cleanup] active_sessions クリーンアップ中のエラー:", safeForLog(err));
+  }
+}, ACTIVE_SESSION_CLEANUP_INTERVAL_MS);
+
+activeCleanupTimer.unref();
 
 // ─────────────────────────────────────────────
 // グレースフルシャットダウン

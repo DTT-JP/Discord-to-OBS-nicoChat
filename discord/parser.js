@@ -249,7 +249,16 @@ export function countChars(parts) {
 
 export function parseMessage(message, watchChannelIds) {
   if (message.author.bot) return null;
-  if (!watchChannelIds.includes(message.channelId)) return null;
+  if (watchChannelIds) {
+    const ok = typeof watchChannelIds.has === "function"
+      ? watchChannelIds.has(message.channelId)
+      : Array.isArray(watchChannelIds)
+        ? watchChannelIds.includes(message.channelId)
+        : false;
+    if (!ok) return null;
+  } else {
+    return null;
+  }
 
   // ── スタンプ専用 ──────────────────────────────
   if (message.stickers.size > 0) {

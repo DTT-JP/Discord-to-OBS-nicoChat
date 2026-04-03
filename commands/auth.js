@@ -73,6 +73,11 @@ export async function execute(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const code = interaction.options.getString("code", true).trim();
+  if (!/^\d{6}$/.test(code)) {
+    return interaction.editReply({
+      content: "❌ 認証コードの形式が不正です（6桁の数字で入力してください）。",
+    });
+  }
 
   // 試行回数をカウント（検証前にインクリメント）
   record.count++;
