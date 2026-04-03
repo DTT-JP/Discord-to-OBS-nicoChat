@@ -2,6 +2,7 @@ import { Events, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB } from "../database.js";
 import { safeForLog } from "../utils/logSafe.js";
 import { parsePageCustomId, handleListPageButton } from "../utils/paginatedList.js";
+import { isHelpComponentInteraction, handleHelpComponent } from "../commands/help.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -24,6 +25,21 @@ export async function execute(interaction, client) {
         } else {
           await interaction.reply(payload).catch(() => {});
         }
+      }
+      return;
+    }
+  }
+
+  if (isHelpComponentInteraction(interaction)) {
+    try {
+      await handleHelpComponent(interaction);
+    } catch (error) {
+      console.error("[interaction] ヘルプナビゲーション エラー:", safeForLog(error));
+      const payload = { content: "❌ 操作中にエラーが発生しました。", flags: MessageFlags.Ephemeral };
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(payload).catch(() => {});
+      } else {
+        await interaction.reply(payload).catch(() => {});
       }
     }
     return;
