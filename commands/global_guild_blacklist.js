@@ -21,16 +21,24 @@ function parseGuildId(interaction) {
 
 function buildGuildDm(guildName, entry) {
   const appealUrl = process.env.GLOBAL_GUILD_BLACKLIST_APPEAL_URL?.trim();
-  const appealLine = appealUrl ? `異議申し立てはこちら: ${appealUrl}` : "異議申し立てはこちら: (URL未設定)";
+  const appealLine = appealUrl ? appealUrl : "未設定";
   const publicReason = entry.public_reason?.trim() ? entry.public_reason.trim() : "（理由なし）";
   const expiresText = entry.expires_at == null ? "無期限" : formatDateTime(entry.expires_at);
-  return [
-    "このサーバーではこのBOTは使えません。",
-    `このBOTはサーバー（${guildName}）から退出しました。`,
-    `理由: ${publicReason}`,
-    `期限: ${expiresText}`,
-    appealLine,
-  ].join("\n");
+
+  return new EmbedBuilder()
+    .setTitle("🚫 このサーバーでは使えません")
+    .setColor(0xed4245)
+    .addFields(
+      { name: "退出先ギルド", value: guildName, inline: false },
+      { name: "理由", value: publicReason, inline: false },
+      { name: "期限", value: expiresText, inline: false },
+      {
+        name: "異議申し立て",
+        value: appealLine === "未設定" ? "未設定" : `[\u7570\u8b70\u7533\u8a00](${appealLine})`,
+        inline: false,
+      },
+    )
+    .setTimestamp();
 }
 
 export const data = new SlashCommandBuilder()
@@ -139,7 +147,7 @@ export async function execute(interaction) {
     if (guild && ownerId && existingEntry) {
       const owner = await interaction.client.users.fetch(ownerId).catch(() => null);
       await guild.leave().catch(() => {});
-      if (owner) await owner.send(buildGuildDm(guild.name, existingEntry)).catch(() => {});
+      if (owner) await owner.send({ embeds: [buildGuildDm(guild.name, existingEntry)] }).catch(() => {});
     }
 
     // 参加中のギルドなら即時にオーナーへDM

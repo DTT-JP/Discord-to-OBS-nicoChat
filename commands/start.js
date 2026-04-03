@@ -164,7 +164,8 @@ export async function execute(interaction) {
     await interaction.user.send({
       embeds: [embed],
       components: [row],
-      content: `\`コード用URL（1行）:\n${overlayUrl}\``,
+      // Discord はコードブロックに `copy` が付くため、ユーザーが安全にコピーできる
+      content: `OBS用URL（1行・コピー用）\n\`\`\`\n${overlayUrl}\n\`\`\``,
     });
   } catch {
     // DM が閉じられている場合は、エフェメラルでURLを返す（token はこの操作をしたユーザーだけに見える）
