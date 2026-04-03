@@ -524,6 +524,10 @@ export const PendingAuthDB = {
     db.prepare("DELETE FROM pending_auths WHERE user_id = ?").run(userId);
     return Promise.resolve();
   },
+  removeAll() {
+    db.prepare("DELETE FROM pending_auths").run();
+    return Promise.resolve();
+  },
   removeExpired() {
     const now = Date.now();
     db.prepare("DELETE FROM pending_auths WHERE expires_at <= ?").run(now);

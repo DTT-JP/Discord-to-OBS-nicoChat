@@ -18,7 +18,6 @@ import {
   PendingAuthDB,
   migrateLegacyJsonIfNeeded,
   getRestoredSessionCounts,
-  flushSessionsForProcessRestart,
   closeDatabase,
 } from "./database.js";
 import { safeForLog } from "./utils/logSafe.js";
@@ -232,14 +231,14 @@ async function shutdown(signal) {
   clearInterval(cleanupTimer);
 
   try {
-    // 1. PM2 reload 等でもセッション行を残す: ソケット ID のみ無効化して WAL をフラッシュ
+    // 1. disconnect ハンドラを抑止
     setSocketShuttingDown(true);
-    flushSessionsForProcessRestart();
-    console.log("[shutdown] セッションを DB に保存（socket_id をクリア）しました");
+    console.log("[shutdown] Socket disconnect ハンドラを停止しました");
 
-    // 2. 期限切れ pending_auth のみ削除
-    await PendingAuthDB.removeExpired();
-    console.log("[shutdown] 期限切れ pending_auth を整理しました");
+    // 2. 全セッションを明示的に破棄
+    await PendingAuthDB.removeAll();
+    await ActiveSessionDB.removeAll();
+    console.log("[shutdown] pending_auth / active_sessions を全削除しました");
 
     // 3. Socket.io の全接続を切断
     await new Promise((resolve) => {
