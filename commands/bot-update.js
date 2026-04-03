@@ -190,11 +190,13 @@ async function reloadCommandsInMemory(client, repoRoot) {
 }
 
 async function gitUpdateAndCheckEnvExample({ repoRoot }) {
-  const envExamplePath = join(repoRoot, ".env.example");
+  const envExamplePathRel = ".env.example";
+  const envExamplePathAbs = join(repoRoot, envExamplePathRel);
 
-  const beforeEnvExampleRaw = await fs.readFile(envExamplePath, "utf8");
+  const beforeEnvExampleRaw = await fs.readFile(envExamplePathAbs, "utf8");
   const beforeEnvExample = normalizeNewlines(beforeEnvExampleRaw);
 
+  // 現在バージョンを控える（キャンセル時は作業ツリーを触らない）
   const beforeSha = (await runCommand("git", ["rev-parse", "HEAD"], { cwd: repoRoot })).stdout.trim();
 
   const remoteName = (process.env.UPDATE_GIT_REMOTE_NAME || "origin").trim() || "origin";
@@ -217,18 +219,32 @@ async function gitUpdateAndCheckEnvExample({ repoRoot }) {
     return "main";
   })());
 
-  // 指定ブランチを fetch -> FETCH_HEAD へ強制リセット（コード更新を確実にする）
+  // 指定ブランチを fetch -> FETCH_HEAD へ
+  // ここではまだ working tree を更新しない（差分判定に使うだけ）。
   await runCommand("git", ["fetch", "--prune", remoteName, targetBranch], { cwd: repoRoot });
+
+  const afterSha = (await runCommand("git", ["rev-parse", "FETCH_HEAD"], { cwd: repoRoot })).stdout.trim();
+
+  // `.env.example` の差分だけ先に判定（キャンセルなら working tree を触らない）
+  const afterEnvExampleGitRaw = (await runCommand("git", ["show", `FETCH_HEAD:${envExamplePathRel}`], { cwd: repoRoot })).stdout;
+  const afterEnvExample = normalizeNewlines(afterEnvExampleGitRaw);
+
+  if (beforeEnvExample !== afterEnvExample) {
+    return {
+      beforeSha,
+      afterSha,
+      envExampleChanged: true,
+    };
+  }
+
+  // 差分なしなら working tree を最新に更新
   await runCommand("git", ["reset", "--hard", "FETCH_HEAD"], { cwd: repoRoot });
 
-  const afterEnvExampleRaw = await fs.readFile(envExamplePath, "utf8");
-  const afterEnvExample = normalizeNewlines(afterEnvExampleRaw);
-
-  const afterSha = (await runCommand("git", ["rev-parse", "HEAD"], { cwd: repoRoot })).stdout.trim();
+  const afterShaConfirmed = (await runCommand("git", ["rev-parse", "HEAD"], { cwd: repoRoot })).stdout.trim();
 
   return {
     beforeSha,
-    afterSha,
+    afterSha: afterShaConfirmed,
     envExampleChanged: beforeEnvExample !== afterEnvExample,
   };
 }
@@ -304,23 +320,16 @@ export async function execute(interaction) {
   try {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     setUpdatingPresence(interaction.client, activityName);
-
-    if (delayMinutes > 0) {
-      await interaction.editReply({
-        content: `🕒 ${delayMinutes} 分後に更新を開始します（更新中のため他のコマンドは利用できません）。`,
-      });
-      await sleep(delayMinutes * 60 * 1000);
-    } else {
-      await interaction.editReply({
-        content: "🔄 更新を開始します（更新中のため他のコマンドは利用できません）。",
-      });
-    }
+    await interaction.editReply({
+      content: "🔄 更新を準備中です（更新中のため他のコマンドは利用できません）。",
+    });
 
     const result = await gitUpdateAndCheckEnvExample({ repoRoot });
 
     if (result.envExampleChanged) {
       const warning = [
         "⚠️ `.env.example` が更新されています。",
+        `更新をキャンセルします（控えていた commit ${result.beforeSha} のままです）。`,
         "DiscordBOT以外の手段で `.env` を反映してから、このコマンドをもう一度実行してください（再起動/再読み込みはスキップされます）。",
       ];
       const warningText = warning.join("\n");
@@ -343,10 +352,22 @@ export async function execute(interaction) {
 
     const shaText = result.beforeSha && result.afterSha ? `\n- commit: ${result.beforeSha} -> ${result.afterSha}` : "";
 
+    const actionLabel = mode === "reload" ? "再読み込み" : "再起動";
+    if (delayMinutes > 0) {
+      await interaction.editReply({
+        content: `✅ 更新ソースを最新化しました。${delayMinutes} 分後に PM2 で ${actionLabel} します（更新中のため他のコマンドは利用できません）。${shaText}`,
+      });
+      await sleep(delayMinutes * 60 * 1000);
+    } else {
+      await interaction.editReply({
+        content: `✅ 更新ソースを最新化しました。今すぐ PM2 で ${actionLabel} します（更新中のため他のコマンドは利用できません）。${shaText}`,
+      });
+    }
+
     if (mode === "reload") {
-      await interaction.editReply({ content: `✅ 更新完了しました。PM2 で再読み込みします。${shaText}` });
       setUpdatingPresence(interaction.client, "再読み込み中...");
       const pm2Res = await runPm2("reload", repoRoot);
+      await sleep(10_000); // pm2 reload が安定するまで猶予
       setDefaultPresence(interaction.client);
       await interaction.editReply({
         content: `✅ 更新完了（PM2 再読み込み）${shaText}\n- --update-env: ${pm2Res.usedUpdateEnv ? "使用" : "未使用"}`,
@@ -354,9 +375,9 @@ export async function execute(interaction) {
       return;
     }
 
-    await interaction.editReply({ content: `✅ 更新完了しました。PM2 で再起動します。${shaText}` });
     setUpdatingPresence(interaction.client, "再起動中...");
     const pm2Res = await runPm2("restart", repoRoot);
+    await sleep(10_000); // restart 後の初期化猶予（プロセス再起動前提のため保険）
     setDefaultPresence(interaction.client);
     await interaction.editReply({
       content: `✅ 更新完了（PM2 再起動）${shaText}\n- --update-env: ${pm2Res.usedUpdateEnv ? "使用" : "未使用"}`,
