@@ -2,7 +2,7 @@ import { PendingAuthDB, ActiveSessionDB } from "../database.js";
 import { generateAuthCode, encrypt } from "../utils/crypto.js";
 import { maskSecrets } from "../utils/logSafe.js";
 import { setDistributeKeyFn } from "../commands/auth.js";
-import { setUpdateLimitFn }   from "../commands/setlimit.js";
+import { setUpdateLimitFn }   from "../commands/session.js";
 import { setApplySecretFn }   from "../commands/secret.js";
 import { setBroadcastFn }     from "../events/messageCreate.js";
 
@@ -54,12 +54,10 @@ export function initSocketManager(io) {
   });
 
   // ── セッションエフェクト適用 ──────────────────────
-  setApplySecretFn((channelId, effect, value) => {
-    const sessions = ActiveSessionDB.findByChannelId(channelId);
-    for (const session of sessions) {
-      if (!session.socket_id) continue;
-      io.to(session.socket_id).emit("apply_secret", { effect, value });
-      console.log(`[manager] apply_secret: socketId=${session.socket_id} effect=${effect} value=${value}`);
+  setApplySecretFn((socketIds, effect, value) => {
+    for (const socketId of socketIds) {
+      io.to(socketId).emit("apply_secret", { effect, value });
+      console.log(`[manager] apply_secret: socketId=${socketId} effect=${effect} value=${value}`);
     }
   });
 

@@ -98,8 +98,8 @@ function buildHelpEmbed(sectionId) {
             inline: false,
           },
           {
-            name:  "🔢 `/setlimit [数値]`",
-            value: "配信中のセッションの同時表示上限をリアルタイムで変更します（1〜99999）。",
+            name:  "🛠️ `/session [channel] [limit] [secret]`",
+            value: "自分が作成したセッションの同時表示上限や secret 許可設定を変更します。",
             inline: false,
           },
           {

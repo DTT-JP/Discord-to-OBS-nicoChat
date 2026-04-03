@@ -20,7 +20,7 @@ discord-obs-overlay/
 │   ├── help.js
 │   ├── my-status.js
 │   ├── secret.js
-│   ├── setlimit.js
+│   ├── session.js
 │   ├── setup.js              # 拒否チャンネル、/start 許可など
 │   ├── start.js              # セッション開始・DM に URL
 │   └── status.js

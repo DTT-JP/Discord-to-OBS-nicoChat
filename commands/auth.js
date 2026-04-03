@@ -125,6 +125,7 @@ export async function execute(interaction) {
   const aesKey       = generateAesKey();
   const maxComments  = pending.max_comments;
   const resumeToken  = randomBytes(32).toString("hex");
+  const secretAllowed = !!pending.secret_allowed;
 
   await ActiveSessionDB.add({
     token_hash:        pending.token_hash,
@@ -134,6 +135,7 @@ export async function execute(interaction) {
     aes_key:           aesKey,
     created_at:        Date.now(),
     max_comments:      maxComments,
+    secret_allowed:    secretAllowed,
     resume_token_hash: hashToken(resumeToken),
   });
 

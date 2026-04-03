@@ -23,6 +23,7 @@ const LEGACY_JSON = join(__dirname, "db.json");
  * @property {string} code_hash
  * @property {number} expires_at
  * @property {number} max_comments
+ * @property {number|boolean} [secret_allowed]
  */
 
 /**
@@ -34,6 +35,7 @@ const LEGACY_JSON = join(__dirname, "db.json");
  * @property {string} aes_key
  * @property {number} created_at
  * @property {number} max_comments
+ * @property {number|boolean} [secret_allowed]
  * @property {string|null} [resume_token_hash]
  */
 
@@ -68,7 +70,8 @@ function initSchema() {
       channel_id   TEXT NOT NULL,
       code_hash    TEXT NOT NULL DEFAULT '',
       expires_at   INTEGER NOT NULL,
-      max_comments INTEGER NOT NULL
+      max_comments INTEGER NOT NULL,
+      secret_allowed INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS active_sessions (
@@ -79,6 +82,7 @@ function initSchema() {
       aes_key           TEXT NOT NULL,
       created_at        INTEGER NOT NULL,
       max_comments      INTEGER NOT NULL,
+      secret_allowed    INTEGER NOT NULL DEFAULT 1,
       resume_token_hash TEXT
     );
 
@@ -165,6 +169,14 @@ function initSchema() {
   if (!ggblCols.some((c) => c.name === "guild_name")) {
     db.exec(`ALTER TABLE global_guild_blacklist ADD COLUMN guild_name TEXT NOT NULL DEFAULT ''`);
   }
+  const pendingCols = /** @type {{ name: string }[]} */ (db.prepare("PRAGMA table_info(pending_auths)").all());
+  if (!pendingCols.some((c) => c.name === "secret_allowed")) {
+    db.exec(`ALTER TABLE pending_auths ADD COLUMN secret_allowed INTEGER NOT NULL DEFAULT 1`);
+  }
+  const activeCols = /** @type {{ name: string }[]} */ (db.prepare("PRAGMA table_info(active_sessions)").all());
+  if (!activeCols.some((c) => c.name === "secret_allowed")) {
+    db.exec(`ALTER TABLE active_sessions ADD COLUMN secret_allowed INTEGER NOT NULL DEFAULT 1`);
+  }
 }
 
 initSchema();
@@ -247,13 +259,13 @@ export function migrateLegacyJsonIfNeeded() {
 
   const insPending = db.prepare(
     `INSERT OR IGNORE INTO pending_auths
-     (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments)
-     VALUES (?,?,?,?,?,?,?)`,
+     (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments, secret_allowed)
+     VALUES (?,?,?,?,?,?,?,?)`,
   );
   const insActive = db.prepare(
     `INSERT OR IGNORE INTO active_sessions
-     (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, resume_token_hash)
-     VALUES (?,?,?,?,?,?,?,?)`,
+     (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, secret_allowed, resume_token_hash)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
   );
   const insAllowed = db.prepare(
     `INSERT OR IGNORE INTO allowed_principals (type, id, guild_id) VALUES (?,?,?)`,
@@ -308,6 +320,7 @@ export function migrateLegacyJsonIfNeeded() {
             String(row.code_hash || (row.code ? hashAuthCode(String(row.code), uid) : "")),
             Number(row.expires_at),
             clampMaxComments(row.max_comments ?? 30),
+            row.secret_allowed === false ? 0 : 1,
           ),
         );
       }
@@ -326,6 +339,7 @@ export function migrateLegacyJsonIfNeeded() {
             String(row.aes_key),
             Number(row.created_at ?? Date.now()),
             clampMaxComments(row.max_comments ?? 30),
+            row.secret_allowed === false ? 0 : 1,
             row.resume_token_hash != null && row.resume_token_hash !== ""
               ? String(row.resume_token_hash)
               : null,
@@ -465,8 +479,8 @@ export const PendingAuthDB = {
     const run = db.transaction(() => {
       db.prepare(
         `INSERT INTO pending_auths
-         (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments)
-         VALUES (?,?,?,?,?,?,?)`,
+         (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments, secret_allowed)
+         VALUES (?,?,?,?,?,?,?,?)`,
       ).run(
         tokenHash,
         record.socket_id ?? "",
@@ -475,6 +489,7 @@ export const PendingAuthDB = {
         codeHash,
         safeExpiresAt,
         maxComments,
+        record.secret_allowed === false ? 0 : 1,
       );
     });
     run();
@@ -545,8 +560,8 @@ export const ActiveSessionDB = {
     const run = db.transaction(() => {
       db.prepare(
         `INSERT INTO active_sessions
-         (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, resume_token_hash)
-         VALUES (?,?,?,?,?,?,?,?)`,
+         (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, secret_allowed, resume_token_hash)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
       ).run(
         tokenHash,
         record.socket_id ?? "",
@@ -555,6 +570,7 @@ export const ActiveSessionDB = {
         record.aes_key,
         safeCreatedAt,
         maxComments,
+        record.secret_allowed === false ? 0 : 1,
         record.resume_token_hash ?? null,
       );
     });
@@ -640,6 +656,25 @@ export const ActiveSessionDB = {
   updateMaxCommentsForUser(userId, maxComments) {
     db.prepare("UPDATE active_sessions SET max_comments = ? WHERE user_id = ?").run(clampMaxComments(maxComments), userId);
     return Promise.resolve();
+  },
+  updateSessionSettingsForOwnerInChannel(userId, channelId, patch) {
+    const sets = [];
+    /** @type {(number|string)[]} */
+    const params = [];
+    if (patch.max_comments != null) {
+      sets.push("max_comments = ?");
+      params.push(clampMaxComments(patch.max_comments));
+    }
+    if (patch.secret_allowed != null) {
+      sets.push("secret_allowed = ?");
+      params.push(patch.secret_allowed ? 1 : 0);
+    }
+    if (sets.length === 0) return Promise.resolve(0);
+    params.push(userId, channelId);
+    const info = db.prepare(
+      `UPDATE active_sessions SET ${sets.join(", ")} WHERE user_id = ? AND channel_id = ?`,
+    ).run(...params);
+    return Promise.resolve(info.changes);
   },
   updateSocketIdByTokenHash(tokenHash, socketId) {
     db.prepare("UPDATE active_sessions SET socket_id = ? WHERE token_hash = ?").run(socketId, tokenHash);

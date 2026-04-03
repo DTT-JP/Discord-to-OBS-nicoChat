@@ -74,6 +74,16 @@ export const data = new SlashCommandBuilder()
       .setMinValue(1)
       .setMaxValue(99999)
       .setRequired(false),
+  )
+  .addStringOption((opt) =>
+    opt
+      .setName("secret")
+      .setDescription("secretコマンドの許可設定")
+      .addChoices(
+        { name: "許可", value: "allow" },
+        { name: "拒否", value: "deny" },
+      )
+      .setRequired(false),
   );
 
 export async function execute(interaction) {
@@ -124,6 +134,8 @@ export async function execute(interaction) {
   const defaultMaxComments = clampMaxComments(process.env.MAX_COMMENTS || DEFAULT_MAX_COMMENTS);
   const requestedLimit = interaction.options.getInteger("limit", false);
   const maxComments = clampMaxComments(requestedLimit ?? defaultMaxComments);
+  const secretMode = interaction.options.getString("secret", false) ?? "allow";
+  const secretAllowed = secretMode !== "deny";
 
   // ユーザー単位で pending を 1 件に寄せて混乱を減らす
   await PendingAuthDB.removeByUserId(userId);
@@ -138,6 +150,7 @@ export async function execute(interaction) {
     channel_id: channel.id,
     expires_at: expiresAt,
     max_comments: maxComments,
+    secret_allowed: secretAllowed,
   });
 
   const overlayUrl = buildOverlayUrl(token);
@@ -154,6 +167,7 @@ export async function execute(interaction) {
       { name: "OBSブラウザソースURL", value: overlayUrlBlock, inline: false },
       { name: "監視チャンネル", value: `<#${channel.id}>`, inline: true },
       { name: "同時表示上限", value: `${maxComments} 件`, inline: true },
+      { name: "secretコマンド", value: secretAllowed ? "許可" : "拒否", inline: true },
       { name: "有効期限", value: `${Math.round(codeExpireMs / 60_000)} 分`, inline: true },
       {
         name: "手順",
