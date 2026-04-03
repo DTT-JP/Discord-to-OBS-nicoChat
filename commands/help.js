@@ -18,6 +18,11 @@ const HELP_SECTIONS = [
     title: "📖 ヘルプ — セットアップ",
   },
   {
+    id:    "update",
+    label: "運用 / 更新",
+    title: "📖 ヘルプ — 運用 / 更新",
+  },
+  {
     id:    "basic",
     label: "基本コマンド",
     title: "📖 ヘルプ — 基本コマンド",
@@ -76,6 +81,29 @@ function buildHelpEmbed(sectionId) {
               "`add` / `remove` / `list`（10件/ページ）",
               "`config` — `/my-status` 照会の可否・サーバーBLの異議申し立てURL",
               "`config_show` — 上記の現在値を表示",
+            ].join("\n"),
+            inline: false,
+          },
+        );
+      break;
+
+    case "update":
+      base
+        .setTitle("📖 Discord OBS Overlay — 運用 / 更新")
+        .setFields(
+          {
+            name: "🔁 `/bot-update`（BOT管理者のみ）",
+            value: [
+              "実行すると `git` で更新し、`pm2` の `restart` / `reload` で反映します。",
+              "",
+              "引数:",
+              "・`mode`: `restart`（`pm2 restart`） / `reload`（`pm2 reload`）",
+              "・`delay_minutes`: 更新開始までの待機時間（分、0=即時）",
+              "",
+              "注意:",
+              "・更新中は他のスラッシュコマンドを無効化します。",
+              "・`UPDATE_PM2_APP`（.env）を設定していない場合、`pm2` で反映できません。",
+              "・更新前後で `.env.example` が異なる場合、`.env` を手動反映してから `/bot-update` を再実行してください（再起動/再読み込みはスキップされます）。",
             ].join("\n"),
             inline: false,
           },
@@ -237,6 +265,7 @@ export const data = new SlashCommandBuilder()
       .setDescription("最初に表示するヘルプ項目")
       .addChoices(
         { name: "セットアップ / 管理者向け", value: "setup" },
+        { name: "運用 / 更新", value: "update" },
         { name: "基本コマンド", value: "basic" },
         { name: "メタデータ / 装飾", value: "meta" },
         { name: "絵文字・記述例", value: "emoji" },

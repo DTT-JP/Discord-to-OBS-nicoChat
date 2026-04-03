@@ -4,6 +4,7 @@ import { safeForLog } from "../utils/logSafe.js";
 import { parsePageCustomId, handleListPageButton } from "../utils/paginatedList.js";
 import { isHelpComponentInteraction, handleHelpComponent } from "../commands/help.js";
 import { formatDateTime } from "../utils/moderation.js";
+import { isUpdateInProgress } from "../utils/updateManager.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -71,12 +72,25 @@ export async function execute(interaction, client) {
   }
 
   if (!interaction.isChatInputCommand()) return;
+
+  // ── Bot 更新中ロック ─────────────────────────────
+  // /bot-update 実行〜更新完了まで、他のスラッシュコマンドを無効化します。
+  // （ボタン/セレクト等の操作は対象外）
+  const isBotUpdateCommand = interaction.commandName === "bot-update";
+  if (isUpdateInProgress() && !isBotUpdateCommand) {
+    return interaction.reply({
+      content: "⚠️ 更新作業中のため、このコマンドはしばらく利用できません。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   const subcommand = interaction.options.getSubcommand(false);
 
   // ── グローバルブラックリストチェック ──────────
   // コマンド実行自体を遮断する（ローカルBLはコマンドは許可・OBSのみ遮断）
   const isMyStatusCheck = interaction.commandName === "my-status";
-  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck) {
+  const isBotUpdateCheck = interaction.commandName === "bot-update";
+  if (GlobalBlacklistDB.has(interaction.user.id) && !(isMyStatusCheck || isBotUpdateCheck)) {
     return interaction.reply({
       content: "このBotを利用する権限がありません。",
       flags: MessageFlags.Ephemeral,
