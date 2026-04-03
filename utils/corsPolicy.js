@@ -59,7 +59,7 @@ export function parseAllowedOriginsList(raw) {
 export function isLocalhostStyleOrigin(originUrl) {
   try {
     const { hostname: host } = new URL(originUrl);
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
   } catch {
     return false;
   }
@@ -200,7 +200,7 @@ export function isLocalDevOrigin(origin) {
   if (!origin) return false;
   try {
     const { hostname: host } = new URL(origin);
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
   } catch {
     return false;
   }

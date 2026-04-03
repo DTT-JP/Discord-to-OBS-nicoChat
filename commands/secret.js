@@ -46,13 +46,13 @@ export async function execute(interaction) {
     });
   }
 
-  const shouldApply = EFFECTS.has(effect);
   const targetSessions = sessions.filter((s) => s.user_id === interaction.user.id || !!s.secret_allowed);
   if (targetSessions.length === 0) {
     return interaction.editReply({
       content: "❌ このチャンネルではこのコマンドを使用できません。",
     });
   }
+  const shouldApply = EFFECTS.has(effect);
   if (shouldApply && targetSessions.length > 0 && applySecretFn) {
     applySecretFn(targetSessions.map((s) => s.socket_id).filter(Boolean), effect, value);
   } else if (shouldApply && targetSessions.length > 0 && !applySecretFn) {
