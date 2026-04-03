@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readdirSync, promises as fs } from "node:fs";
+import { readdirSync, promises as fs, existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { config as dotenvConfig } from "dotenv";
 import { isAdminOrOwner } from "../utils/moderation.js";
@@ -54,7 +54,88 @@ function getPm2App() {
   return (process.env.UPDATE_PM2_APP || "").trim();
 }
 
-async function runPm2(action) {
+function isSpawnEnoentError(err) {
+  const code = String(err?.code ?? "");
+  const msg = String(err?.message ?? "");
+  return code === "ENOENT" || msg.includes("spawn pm2") || msg.includes("ENOENT") || msg.includes("not found");
+}
+
+function getUpdatePm2BinPath() {
+  return (process.env.UPDATE_PM2_BIN || "").trim();
+}
+
+async function resolvePm2CliPath({ repoRoot }) {
+  const explicitBin = getUpdatePm2BinPath();
+  if (explicitBin) {
+    if (!existsSync(explicitBin)) {
+      throw new Error(`UPDATE_PM2_BIN が見つかりません: ${explicitBin}`);
+    }
+    return explicitBin;
+  }
+
+  const candidates = [];
+
+  // repo 配下（通常は無いが念のため）
+  candidates.push(join(repoRoot, "node_modules", "pm2", "bin", "pm2"));
+  candidates.push(join(repoRoot, "node_modules", "pm2", "bin", "pm2.js"));
+
+  // Linux/macOS の典型的なグローバル位置
+  candidates.push("/usr/local/lib/node_modules/pm2/bin/pm2");
+  candidates.push("/usr/local/lib/node_modules/pm2/bin/pm2.js");
+  candidates.push("/usr/lib/node_modules/pm2/bin/pm2");
+  candidates.push("/usr/lib/node_modules/pm2/bin/pm2.js");
+  candidates.push("/opt/homebrew/lib/node_modules/pm2/bin/pm2");
+  candidates.push("/opt/homebrew/lib/node_modules/pm2/bin/pm2.js");
+
+  // Windows のよくある場所
+  const appData = (process.env.APPDATA || "").trim();
+  const localAppData = (process.env.LOCALAPPDATA || "").trim();
+  const userProfile = (process.env.USERPROFILE || "").trim();
+
+  if (appData) {
+    candidates.push(join(appData, "npm", "node_modules", "pm2", "bin", "pm2"));
+    candidates.push(join(appData, "npm", "node_modules", "pm2", "bin", "pm2.js"));
+  }
+  if (localAppData) {
+    candidates.push(join(localAppData, "npm", "node_modules", "pm2", "bin", "pm2"));
+    candidates.push(join(localAppData, "npm", "node_modules", "pm2", "bin", "pm2.js"));
+  }
+  if (userProfile) {
+    candidates.push(join(userProfile, "AppData", "Roaming", "npm", "node_modules", "pm2", "bin", "pm2"));
+    candidates.push(join(userProfile, "AppData", "Roaming", "npm", "node_modules", "pm2", "bin", "pm2.js"));
+  }
+
+  // OS横断: npm のグローバルインストール位置を読む（npm があれば一番確実）
+  try {
+    const globalRoot = (await runCommand("npm", ["root", "-g"], { cwd: repoRoot })).stdout.trim();
+    if (globalRoot) {
+      candidates.push(join(globalRoot, "pm2", "bin", "pm2"));
+      candidates.push(join(globalRoot, "pm2", "bin", "pm2.js"));
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const prefix = (await runCommand("npm", ["prefix", "-g"], { cwd: repoRoot })).stdout.trim();
+    if (prefix) {
+      candidates.push(join(prefix, "lib", "node_modules", "pm2", "bin", "pm2"));
+      candidates.push(join(prefix, "lib", "node_modules", "pm2", "bin", "pm2.js"));
+      candidates.push(join(prefix, "node_modules", "pm2", "bin", "pm2"));
+      candidates.push(join(prefix, "node_modules", "pm2", "bin", "pm2.js"));
+    }
+  } catch {
+    // ignore
+  }
+
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+
+  return "";
+}
+
+async function runPm2(action, repoRoot) {
   const app = getPm2App();
   if (!app) {
     throw new Error("UPDATE_PM2_APP が .env に設定されていません。PM2 のアプリ名（または ID）を指定してください。");
@@ -67,12 +148,28 @@ async function runPm2(action) {
 
   // --update-env が効かない/許可されていない環境があるため、まず試してダメなら外す
   const argsWithUpdate = [action, app, "--update-env", ...extraArgs];
+  const argsWithoutUpdate = [action, app, ...extraArgs];
+
+  // まずは PATH 経由（最速）
   try {
     await runCommand("pm2", argsWithUpdate);
     return { usedUpdateEnv: true };
+  } catch (e) {
+    if (!isSpawnEnoentError(e)) throw e;
+  }
+
+  // PATH 不在なら、pm2 CLI を絶対パスで解決して node で実行
+  const pm2CliPath = await resolvePm2CliPath({ repoRoot });
+  if (!pm2CliPath) {
+    throw new Error("pm2 を実行できるファイルを見つけられませんでした。UPDATE_PM2_BIN を絶対パスで設定してください。");
+  }
+
+  // --update-env が効かない/許可されない場合にも対応
+  try {
+    await runCommand(process.execPath, [pm2CliPath, ...argsWithUpdate], { cwd: repoRoot });
+    return { usedUpdateEnv: true };
   } catch {
-    const argsWithoutUpdate = [action, app, ...extraArgs];
-    await runCommand("pm2", argsWithoutUpdate);
+    await runCommand(process.execPath, [pm2CliPath, ...argsWithoutUpdate], { cwd: repoRoot });
     return { usedUpdateEnv: false };
   }
 }
@@ -225,15 +322,16 @@ export async function execute(interaction) {
       const warning = [
         "⚠️ `.env.example` が更新されています。",
         "DiscordBOT以外の手段で `.env` を反映してから、このコマンドをもう一度実行してください（再起動/再読み込みはスキップされます）。",
-      ].join("\n");
+      ];
+      const warningText = warning.join("\n");
 
-      await interaction.editReply({ content: warning });
+      await interaction.editReply({ content: warningText });
 
       // BOTオーナーへも通告（呼び出しユーザーがオーナーなら重複を避ける）
       if (!isBotOwnerUser && botOwnerId) {
         try {
           const u = await interaction.client.users.fetch(botOwnerId);
-          await u.send({ content: warning }).catch(() => {});
+          await u.send({ content: warningText }).catch(() => {});
         } catch {
           // ignore
         }
@@ -248,7 +346,7 @@ export async function execute(interaction) {
     if (mode === "reload") {
       await interaction.editReply({ content: `✅ 更新完了しました。PM2 で再読み込みします。${shaText}` });
       setUpdatingPresence(interaction.client, "再読み込み中...");
-      const pm2Res = await runPm2("reload");
+      const pm2Res = await runPm2("reload", repoRoot);
       setDefaultPresence(interaction.client);
       await interaction.editReply({
         content: `✅ 更新完了（PM2 再読み込み）${shaText}\n- --update-env: ${pm2Res.usedUpdateEnv ? "使用" : "未使用"}`,
@@ -258,7 +356,7 @@ export async function execute(interaction) {
 
     await interaction.editReply({ content: `✅ 更新完了しました。PM2 で再起動します。${shaText}` });
     setUpdatingPresence(interaction.client, "再起動中...");
-    const pm2Res = await runPm2("restart");
+    const pm2Res = await runPm2("restart", repoRoot);
     setDefaultPresence(interaction.client);
     await interaction.editReply({
       content: `✅ 更新完了（PM2 再起動）${shaText}\n- --update-env: ${pm2Res.usedUpdateEnv ? "使用" : "未使用"}`,
