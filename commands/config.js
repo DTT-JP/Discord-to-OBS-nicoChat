@@ -25,7 +25,7 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub
-      .setName("del_setup_role")
+      .setName("remove_setup_role")
       .setDescription("/setup 実行許可ロールを削除します")
       .addRoleOption((opt) => opt.setName("role").setDescription("削除するロール").setRequired(true)),
   )
@@ -42,7 +42,7 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub
-      .setName("del_setup_user")
+      .setName("remove_setup_user")
       .setDescription("/setup 実行許可ユーザーを削除します")
       .addUserOption((opt) =>
         opt.setName("user").setDescription("削除するユーザー（@メンション）").setRequired(false),
@@ -138,7 +138,7 @@ export async function execute(interaction) {
     await SetupPrincipalDB.add("role", role.id, guildId);
     return interaction.editReply({ content: `✅ ロール **${role.name}** を /setup 実行許可に追加しました。` });
   }
-  if (sub === "del_setup_role") {
+  if (sub === "remove_setup_role") {
     const role = interaction.options.getRole("role", true);
     await SetupPrincipalDB.remove("role", role.id, guildId);
     return interaction.editReply({ content: `🗑️ ロール **${role.name}** を /setup 実行許可から削除しました。` });
@@ -150,7 +150,7 @@ export async function execute(interaction) {
     const label = await formatUserTagForReply(interaction.client, target);
     return interaction.editReply({ content: `✅ ユーザー **${label}** を /setup 実行許可に追加しました。` });
   }
-  if (sub === "del_setup_user") {
+  if (sub === "remove_setup_user") {
     const target = parseTargetUser(interaction);
     if (target.error) return interaction.editReply({ content: target.error });
     await SetupPrincipalDB.remove("user", target.userId, guildId);

@@ -64,7 +64,7 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub
-      .setName("del_deny_channel_list")
+      .setName("remove_deny_channel")
       .setDescription("拒否チャンネルから削除")
       .addChannelOption((opt) =>
         opt.setName("channel").setDescription("対象チャンネル").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true),
@@ -198,7 +198,7 @@ export async function execute(interaction) {
     return interaction.editReply({ content: `✅ <#${channel.id}> を拒否チャンネルに追加しました。` });
   }
 
-  if (sub === "del_deny_channel_list") {
+  if (sub === "remove_deny_channel") {
     const channel = interaction.options.getChannel("channel", true);
     const removed = await DenyChannelDB.remove(guildId, channel.id);
     if (!removed) return interaction.editReply({ content: `⚠️ <#${channel.id}> は拒否チャンネルに登録されていません。` });

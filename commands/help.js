@@ -54,7 +54,7 @@ function buildHelpEmbed(sectionId) {
           {
             name:  "🔧 `/config` （サーバーオーナー・管理者のみ）",
             value: [
-              "`/setup` 実行許可: `add_setup_role` / `del_setup_role` / `add_setup_user` / `del_setup_user`",
+              "`/setup` 実行許可: `add_setup_role` / `remove_setup_role` / `add_setup_user` / `remove_setup_user`",
               "一覧: `setup_role_list` / `setup_user_list`（`page` で開始ページ、◀▶ で送り）",
               "`/blacklist` 操作許可: `ctrl_blacklist_role` / `remove_ctrl_blacklist_role` / `ctrl_blacklist_user` / `remove_ctrl_blacklist_user`",
               "一覧: `ctrl_blacklist_role_list` / `ctrl_blacklist_user_list`",
@@ -66,7 +66,7 @@ function buildHelpEmbed(sectionId) {
             value: [
               "`overview` — 拒否チャンネル・/start 許可・オーバーレイURLの概要",
               "`deny_channel_list` / `allow_start_role_list` / `allow_start_user_list` — 各10件/ページ・`page`・◀▶",
-              "`allow_start_*` / `remove_start_*` / 拒否チャンネルの追加・削除",
+              "`allow_start_*` / `remove_start_*` / `add_deny_channel` / `remove_deny_channel`",
             ].join("\n"),
             inline: false,
           },
