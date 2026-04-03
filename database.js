@@ -254,6 +254,9 @@ export function migrateLegacyJsonIfNeeded() {
   const insSetup = db.prepare(
     `INSERT OR IGNORE INTO setup_principals (type, id, guild_id) VALUES (?,?,?)`,
   );
+  const insBlacklistCtrl = db.prepare(
+    `INSERT OR IGNORE INTO blacklist_ctrl_principals (type, id, guild_id) VALUES (?,?,?)`,
+  );
   const insDeny = db.prepare(
     `INSERT OR IGNORE INTO deny_channels (guild_id, channel_id, added_by, added_at) VALUES (?,?,?,?)`,
   );
@@ -330,6 +333,13 @@ export function migrateLegacyJsonIfNeeded() {
         const x = /** @type {Record<string, unknown>} */ (p);
         if (!x.type || !x.id || !x.guild_id) continue;
         bump(insSetup.run(String(x.type), String(x.id), String(x.guild_id)));
+      }
+
+      for (const p of /** @type {unknown[]} */ (data.blacklist_ctrl_principals ?? [])) {
+        if (!p || typeof p !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (p);
+        if (!x.type || !x.id || !x.guild_id) continue;
+        bump(insBlacklistCtrl.run(String(x.type), String(x.id), String(x.guild_id)));
       }
 
       for (const e of /** @type {unknown[]} */ (data.deny_channels ?? [])) {

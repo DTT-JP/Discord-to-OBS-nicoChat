@@ -4,6 +4,7 @@ import {
   isAdminOrOwner,
   parseTargetUser,
   formatRemaining,
+  formatDateTime,
   formatUserTagForReply,
 } from "../utils/moderation.js";
 import { parseDurationValueAndUnit } from "../utils/blacklistDuration.js";
@@ -70,6 +71,17 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     pageOpt(sub.setName("list").setDescription("このサーバーのブラックリスト一覧（10件/ページ）")),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("show")
+      .setDescription("このサーバーのブラックリスト登録詳細を表示します")
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("対象（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("対象のユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -148,6 +160,37 @@ export async function execute(interaction) {
   }
 
   if (sub === "list") return replyPaginatedList(interaction, ListScope.BLACKLIST_ENTRIES);
+  if (sub === "show") {
+    const target = parseTargetUser(interaction);
+    if (target.error) return interaction.editReply({ content: target.error });
+
+    const entry = LocalBlacklistDB.find(target.userId, guildId);
+    if (!entry) {
+      return interaction.editReply({
+        content: `ℹ️ \`${target.userId}\` はこのサーバーのブラックリストに登録されていません。`,
+      });
+    }
+
+    const displayUser = target.user ?? (await interaction.client.users.fetch(target.userId).catch(() => null));
+    const nameLine = displayUser?.tag ?? `(API未取得) \`${target.userId}\``;
+    const guildText = `${interaction.guild.name} / \`${guildId}\``;
+
+    const embed = new EmbedBuilder()
+      .setTitle("🔎 blacklist_show")
+      .setColor(0xed4245)
+      .addFields(
+        { name: "ユーザーID", value: entry.user_id, inline: true },
+        { name: "名前", value: nameLine, inline: true },
+        { name: "施行日時", value: formatDateTime(entry.added_at), inline: true },
+        { name: "どこのサーバー", value: guildText, inline: false },
+        { name: "理由", value: entry.reason || "(理由なし)", inline: false },
+        { name: "残り期限", value: formatRemaining(entry.expires_at), inline: true },
+        { name: "設定期限", value: formatDateTime(entry.expires_at), inline: true },
+      )
+      .setTimestamp();
+
+    return interaction.editReply({ embeds: [embed] });
+  }
 
   if (sub === "config") {
     const enabled = interaction.options.getBoolean("enabled", true);
