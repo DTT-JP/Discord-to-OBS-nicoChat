@@ -34,9 +34,13 @@ function setUpdatingPresence(client, activityName) {
   });
 }
 
-function runCommand(cmd, args, { cwd } = {}) {
+function runCommand(cmd, args, { cwd, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { cwd, windowsHide: true }, (err, stdout, stderr) => {
+    execFile(
+      cmd,
+      args,
+      { cwd, windowsHide: true, timeout: timeoutMs },
+      (err, stdout, stderr) => {
       if (err) {
         const details = (stderr || stdout || err.message || "").toString().trim();
         return reject(new Error(details || `command failed: ${cmd} ${args.join(" ")}`));
@@ -45,7 +49,8 @@ function runCommand(cmd, args, { cwd } = {}) {
         stdout: stdout?.toString() ?? "",
         stderr: stderr?.toString() ?? "",
       });
-    });
+      },
+    );
   });
 }
 
@@ -158,16 +163,17 @@ async function runPm2(action, repoRoot) {
     .filter(Boolean);
 
   const killTimeoutMs = Number(process.env.UPDATE_PM2_KILL_TIMEOUT_MS ?? process.env.PM2_KILL_TIMEOUT ?? 5000);
+  const cmdTimeoutMs = Number(process.env.UPDATE_PM2_CMD_TIMEOUT_MS ?? 20_000);
 
   const hasToken = (token) => extraArgs.some((a) => a === token || a.startsWith(`${token}=`));
   const hasForce = hasToken("--force") || hasToken("-f");
   const hasKillTimeout = hasToken("--kill-timeout");
 
-  const resolvePm2TargetArg = async ({ pm2CliPath }) => {
+  async function resolvePm2TargetMeta({ pm2CliPath }) {
     // UPDATE_PM2_APP に numeric が入ってる場合、pm2 の id と合ってないと「Process 0 not found」になり得るため、
     // jlist から現在の対象を解決して “名前” を使うようにする。
     const t = String(app).trim();
-    if (!t) return app;
+    if (!t) return { targetArg: app, pid: 0 };
 
     const isNumeric = /^\d+$/.test(t);
     const cmd = pm2CliPath ? process.execPath : "pm2";
@@ -175,13 +181,13 @@ async function runPm2(action, repoRoot) {
 
     let list;
     try {
-      const { stdout } = await runCommand(cmd, args, { cwd: repoRoot });
+      const { stdout } = await runCommand(cmd, args, { cwd: repoRoot, timeoutMs: 10_000 });
       list = JSON.parse(stdout);
     } catch {
-      return app; // 解決できなければ従来通り
+      return { targetArg: app, pid: 0 }; // 解決できなければ従来通り
     }
 
-    if (!Array.isArray(list)) return app;
+    if (!Array.isArray(list)) return { targetArg: app, pid: 0 };
 
     for (const item of list) {
       const env = item?.pm2_env ?? {};
@@ -190,19 +196,37 @@ async function runPm2(action, repoRoot) {
       const pid = item?.pid ?? env?.pid ?? "";
 
       if (isNumeric) {
-        if (String(pmId) === t) return String(name || t);
-        if (String(pid) === t) return String(name || t);
+        if (String(pmId) === t) return { targetArg: String(name || t), pid: Number(pid) || 0 };
+        if (String(pid) === t) return { targetArg: String(name || t), pid: Number(pid) || 0 };
       } else {
-        if (String(name) === t) return t;
+        if (String(name) === t) return { targetArg: t, pid: Number(pid) || 0 };
       }
     }
 
-    return app;
-  };
+    return { targetArg: app, pid: 0 };
+  }
+
+  async function killPidWindows(pid) {
+    // Windowsで pm2 が kill に失敗するケースを回避（Stop-Process は成功しやすい）
+    if (!pid || !Number.isFinite(pid)) return;
+    try {
+      await runCommand(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`,
+        ],
+        { cwd: repoRoot, timeoutMs: 8_000 },
+      );
+    } catch {
+      // ignore
+    }
+  }
 
   // --update-env が効かない/許可されていない環境があるため、まず試してダメなら外す
   const pm2CliPath = await resolvePm2CliPath({ repoRoot });
-  const targetArg = await resolvePm2TargetArg({ pm2CliPath: pm2CliPath || "" });
+  const { targetArg, pid: resolvedPid } = await resolvePm2TargetMeta({ pm2CliPath: pm2CliPath || "" });
 
   const buildArgs = ({ includeUpdateEnv }) => {
     const base = includeUpdateEnv ? [action, targetArg, "--update-env", ...extraArgs] : [action, targetArg, ...extraArgs];
@@ -218,20 +242,30 @@ async function runPm2(action, repoRoot) {
   // PATH に pm2 が無い環境でも動くよう、可能なら常に絶対パス（node <pm2-cli>）で実行します。
   if (pm2CliPath) {
     try {
-      await runCommand(process.execPath, [pm2CliPath, ...argsWithUpdate], { cwd: repoRoot });
+      await runCommand(process.execPath, [pm2CliPath, ...argsWithUpdate], { cwd: repoRoot, timeoutMs: cmdTimeoutMs });
       return { usedUpdateEnv: true };
     } catch {
-      await runCommand(process.execPath, [pm2CliPath, ...argsWithoutUpdate], { cwd: repoRoot });
+      try {
+        if (process.platform === "win32" && resolvedPid) await killPidWindows(resolvedPid);
+      } catch {
+        // ignore
+      }
+      await runCommand(process.execPath, [pm2CliPath, ...argsWithoutUpdate], { cwd: repoRoot, timeoutMs: cmdTimeoutMs });
       return { usedUpdateEnv: false };
     }
   }
 
   // pm2-cli の探索に失敗した場合のみ PATH の pm2 を使う（最後の手段）
   try {
-    await runCommand("pm2", argsWithUpdate);
+    await runCommand("pm2", argsWithUpdate, { cwd: repoRoot, timeoutMs: cmdTimeoutMs });
     return { usedUpdateEnv: true };
   } catch {
-    await runCommand("pm2", argsWithoutUpdate);
+    try {
+      if (process.platform === "win32" && resolvedPid) await killPidWindows(resolvedPid);
+    } catch {
+      // ignore
+    }
+    await runCommand("pm2", argsWithoutUpdate, { cwd: repoRoot, timeoutMs: cmdTimeoutMs });
     return { usedUpdateEnv: false };
   }
 }

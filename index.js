@@ -230,14 +230,11 @@ async function shutdown(signal) {
 
   // pm2 stop/reload は一定時間内にプロセスを終了させる必要があるため、
   // クリーンアップが詰まっても強制終了できるタイムアウトを用意します。
-  const shutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 15_000);
+  // PM2 on Windows は SIGTERM（=graceful）から SIGKILL へ切り替わるまでの待ち時間が短いことがあるため、
+  // アプリ側はそれより早く exit する（DB フラッシュ等は捨てる前提）。
+  const shutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 900);
   const shutdownTimer = setTimeout(() => {
     console.error(`[shutdown] クリーンアップがタイムアウトしたため強制終了します（signal=${signal} timeoutMs=${shutdownTimeoutMs}）`);
-    try {
-      closeDatabase();
-    } catch {
-      // ignore
-    }
     process.exit(0);
   }, shutdownTimeoutMs);
 
@@ -268,11 +265,19 @@ async function shutdown(signal) {
     });
     console.log("[shutdown] Socket.io サーバーを停止しました");
 
-    // 4. HTTP サーバーを停止
-    await new Promise((resolve, reject) => {
-      httpServer.close((err) => (err ? reject(err) : resolve()));
-    });
-    console.log("[shutdown] HTTP サーバーを停止しました");
+    // 4. HTTP サーバーを停止（すでに停止済みの場合の ERR_SERVER_NOT_RUNNING は無視）
+    try {
+      await new Promise((resolve, reject) => {
+        httpServer.close((err) => (err ? reject(err) : resolve()));
+      });
+      console.log("[shutdown] HTTP サーバーを停止しました");
+    } catch (err) {
+      if (err && typeof err === "object" && err.code === "ERR_SERVER_NOT_RUNNING") {
+        console.warn("[shutdown] HTTP サーバーは既に停止していました（ERR_SERVER_NOT_RUNNING）");
+      } else {
+        throw err;
+      }
+    }
 
     // 5. Discord Bot をログアウト
     await client.destroy();
