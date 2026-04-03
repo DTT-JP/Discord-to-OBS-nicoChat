@@ -38,6 +38,17 @@ export function initSocketManager(io) {
   const connectionAttempts = new Map();
   const WINDOW_MS = 60_000;
   const MAX_ATTEMPTS_PER_MIN = 30;
+  const ATTEMPT_SWEEP_INTERVAL_MS = 2 * WINDOW_MS;
+
+  const attemptSweeper = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, rec] of connectionAttempts) {
+      if (!rec || now - rec.windowStart > ATTEMPT_SWEEP_INTERVAL_MS) {
+        connectionAttempts.delete(ip);
+      }
+    }
+  }, ATTEMPT_SWEEP_INTERVAL_MS);
+  attemptSweeper.unref();
 
   // ── AES鍵・上限値の配布 ──────────────────────────
   setDistributeKeyFn((socketId, aesKey, maxComments, resumeToken) => {

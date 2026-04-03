@@ -31,6 +31,18 @@ export function setDistributeKeyFn(fn) {
 const authAttempts = new Map();
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS   = 5 * 60 * 1000; // 5分
+const AUTH_ATTEMPT_SWEEP_MS = 10 * 60 * 1000; // 10分ごと
+const AUTH_ATTEMPT_MAX_IDLE_MS = LOCKOUT_MS * 2;
+
+const authAttemptSweeper = setInterval(() => {
+  const now = Date.now();
+  for (const [uid, rec] of authAttempts) {
+    if (!rec || now - rec.lastAttempt > AUTH_ATTEMPT_MAX_IDLE_MS) {
+      authAttempts.delete(uid);
+    }
+  }
+}, AUTH_ATTEMPT_SWEEP_MS);
+authAttemptSweeper.unref();
 
 export async function execute(interaction) {
   if (!interaction.guild) {
