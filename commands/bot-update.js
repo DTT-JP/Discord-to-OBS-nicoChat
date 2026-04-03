@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readdirSync, promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
+import { config as dotenvConfig } from "dotenv";
 import { isAdminOrOwner } from "../utils/moderation.js";
 import { isUpdateInProgress, tryStartUpdateJob, finishUpdateJob } from "../utils/updateManager.js";
 
@@ -162,6 +163,10 @@ export const data = new SlashCommandBuilder()
  */
 export async function execute(interaction) {
   const repoRoot = getRepoRootFromThisModule();
+
+  // PM2 起動時の env と現在の .env がズレることがあるため、
+  // /bot-update 実行時にだけ .env を明示パスで読み直して必要キーを補完します。
+  dotenvConfig({ path: join(repoRoot, ".env"), override: false });
 
   if (!interaction.guild) {
     return interaction.reply({
