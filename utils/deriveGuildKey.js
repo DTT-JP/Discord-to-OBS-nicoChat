@@ -26,5 +26,8 @@ export function deriveGuildSettingsKeyHex(guildId) {
   const ikm  = getMasterKeyMaterial();
   const salt = Buffer.from(`d2obs|guild|${guildId}`, "utf8");
   const info = Buffer.from("d2obs-guild-settings-v1", "utf8");
-  return hkdfSync("sha256", ikm, salt, info, 32).toString("hex");
+  // Node.js 22+ では hkdfSync が ArrayBuffer を返すことがあり、
+  // ArrayBuffer に .toString("hex") すると鍵にならない文字列になる（Invalid key length の原因）
+  const raw = hkdfSync("sha256", ikm, salt, info, 32);
+  return Buffer.from(raw).toString("hex");
 }
