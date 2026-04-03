@@ -341,7 +341,8 @@ export async function execute(interaction) {
 
   // PM2 起動時の env と現在の .env がズレることがあるため、
   // /bot-update 実行時にだけ .env を明示パスで読み直して必要キーを補完します。
-  dotenvConfig({ path: join(repoRoot, ".env"), override: true });
+  // PM2 起動時に注入された環境変数（UPDATE_PM2_APP など）を上書きしない
+  dotenvConfig({ path: join(repoRoot, ".env"), override: false });
 
   if (!interaction.guild) {
     return interaction.reply({
