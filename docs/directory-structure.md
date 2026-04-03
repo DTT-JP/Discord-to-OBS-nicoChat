@@ -1,4 +1,4 @@
-# ディレクトリ構成（抜粋）
+# ディレクトリ構成（主要ファイル）
 
 ```
 discord-obs-overlay/
@@ -19,7 +19,6 @@ discord-obs-overlay/
 │   ├── global_blacklist.js
 │   ├── help.js
 │   ├── my-status.js
-│   ├── secret.js
 │   ├── session.js
 │   ├── setup.js              # 拒否チャンネル、/start 許可など
 │   ├── start.js              # セッション開始・DM に URL
@@ -53,4 +52,5 @@ discord-obs-overlay/
     └── troubleshooting.md
 ```
 
-※ スラッシュコマンドは `deploy-commands.js` が `commands/*.js` を読み込んで登録します。
+※ スラッシュコマンドは `deploy-commands.js` が `commands/*.js` を読み込んで登録します。  
+※ セキュリティ上の理由で、この一覧には内部運用用の一部コマンドを含めていません。

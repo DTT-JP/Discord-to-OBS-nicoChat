@@ -1,41 +1,44 @@
-# 環境変数（詳細）
+# 環境変数
 
-`.env.example` と `index.js` の必須チェックがソースの正です。本番では `NODE_ENV=production` と CORS 関連を必ず確認してください。
+このドキュメントは**セルフホスト時**の `.env` 設定ガイドです。  
+公開BOTを利用するだけの場合、この設定は不要です。  
+最終仕様は常に `.env.example` と `index.js` のチェック処理を正とします。
 
-## 必須（起動時に未設定だと終了）
+## 必須項目（未設定だと起動失敗）
 
-| 変数 | 説明 |
+| 変数 | 用途 |
 |---|---|
 | `DISCORD_TOKEN` | Bot トークン |
-| `CLIENT_ID` | アプリケーション ID |
-| `PORT` | HTTP/Socket.io のポート |
+| `CLIENT_ID` | Discord Application ID |
+| `PORT` | HTTP / Socket.io の待ち受けポート |
 | `HOST` | URL 生成用ホスト名（`PUBLIC_URL` 未設定時） |
-| `MASTER_KEY` | 64 hex または任意文字列（ギルド設定の暗号化に使用） |
+| `MASTER_KEY` | ギルド単位設定の暗号化に使う鍵素材 |
 
-## CORS・HTTPS（本番で重要）
+## 本番運用で重要な項目（CORS / HTTPS）
 
-| 変数 | 説明 |
+| 変数 | 役割 |
 |---|---|
-| `NODE_ENV` / `APP_ENV` | `production` で CORS 本番ルール |
-| `ALLOWED_ORIGINS` | 本番では必須（1 件以上）。詳細は [ALLOWED_ORIGINS.md](./ALLOWED_ORIGINS.md) |
-| `ALLOW_NULL_ORIGIN` | OBS 等の Origin 無し接続。本番では未設定＝拒否 |
-| `PUBLIC_URL` | `https://` で始まると Helmet の HSTS が有効になりやすい |
-| `ENABLE_HSTS` | `1` で HSTS を明示有効 |
+| `NODE_ENV` / `APP_ENV` | `production` で本番向けCORSルールを適用 |
+| `ALLOWED_ORIGINS` | 本番では必須（1件以上）。詳細は [ALLOWED_ORIGINS.md](./ALLOWED_ORIGINS.md) |
+| `ALLOW_NULL_ORIGIN` | OBS など Origin なし接続の許可設定 |
+| `PUBLIC_URL` | 外部公開URL。`https://` で HSTS 条件に影響 |
+| `ENABLE_HSTS` | `1` で HSTS を明示有効化 |
 
-## Bot 運用
+## Bot運用向け項目
 
-スラッシュコマンドの定義（`commands/*.js`）を変えたあとは、**`npm run deploy-commands`** で Discord へ再登録してください（グローバル登録の反映には最大約 1 時間かかる場合があります）。
+スラッシュコマンド定義（`commands/*.js`）を変更した場合は、`npm run deploy-commands` で再登録が必要です。  
+グローバル反映には最大で約1時間かかる場合があります。
 
-| 変数 | 説明 |
+| 変数 | 用途 |
 |---|---|
-| `BOT_OWNER_ID` | `/global_blacklist` 等の製作者専用コマンドに使用 |
-| `GLOBAL_BLACKLIST_APPEAL_URL` | `/my-status` での表示用 |
-| `GLOBAL_GUILD_BLACKLIST_APPEAL_URL` | `/global_guild_blacklist` の DM表示用 |
-| `MAX_COMMENTS` | デフォルト同時表示上限 |
-| `CODE_EXPIRE_MINUTES` | 認証待ちトークンの有効期限 |
-| `AUTH_CODE_PEPPER` | 未設定時は起動ごとにランダム（`utils/crypto.js`）。本番では固定値推奨 |
+| `BOT_OWNER_ID` | 製作者専用コマンドの判定に使用 |
+| `GLOBAL_BLACKLIST_APPEAL_URL` | `/my-status` 表示用URL |
+| `GLOBAL_GUILD_BLACKLIST_APPEAL_URL` | グローバルギルドBL通知の表示用URL |
+| `MAX_COMMENTS` | 同時表示コメント上限の既定値 |
+| `CODE_EXPIRE_MINUTES` | 認証待ちトークン有効期限 |
+| `AUTH_CODE_PEPPER` | 認証コード保護用ペッパー（本番は固定値推奨） |
 
-## データベース
+## データベース補足
 
-- 既定の DB ファイルはプロジェクト直下の `app.db`（WAL モード）。
-- 旧 `db.json` は初回など条件で SQLite にマージされます。
+- 既定DBはプロジェクト直下の `app.db`（SQLite / WAL）。
+- 旧 `db.json` は条件を満たす場合に起動時マイグレーションされます。
