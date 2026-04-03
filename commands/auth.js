@@ -64,8 +64,10 @@ export async function execute(interaction) {
 
   // ── ブルートフォース保護 ──────────────────────
   const userId = interaction.user.id;
+  const guildId = interaction.guild.id;
+  const lockoutKey = `${guildId}:${userId}`;
   const now    = Date.now();
-  const record = authAttempts.get(userId) ?? { count: 0, lastAttempt: 0 };
+  const record = authAttempts.get(lockoutKey) ?? { count: 0, lastAttempt: 0 };
 
   // ロックアウト期間が過ぎていたらリセット
   if (now - record.lastAttempt >= LOCKOUT_MS) {
@@ -94,7 +96,7 @@ export async function execute(interaction) {
   // 試行回数をカウント（検証前にインクリメント）
   record.count++;
   record.lastAttempt = now;
-  authAttempts.set(userId, record);
+  authAttempts.set(lockoutKey, record);
 
   const pending = PendingAuthDB.findByCodeAndUser(code, userId);
 
@@ -132,7 +134,7 @@ export async function execute(interaction) {
   }
 
   // 認証成功 → 試行カウントをリセット
-  authAttempts.delete(userId);
+  authAttempts.delete(lockoutKey);
 
   const aesKey       = generateAesKey();
   const maxComments  = pending.max_comments;

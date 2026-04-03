@@ -22,6 +22,24 @@ function pageOpt(sub) {
   );
 }
 
+/**
+ * @param {string} raw
+ * @returns {{ ok: true, value: string } | { ok: false, error: string }}
+ */
+function validateAppealUrl(raw) {
+  if (!raw) return { ok: true, value: "" };
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return { ok: false, error: "❌ `appeal_url` は有効なURLを指定してください（http:// または https://）。" };
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    return { ok: false, error: "❌ `appeal_url` は http:// または https:// で始まるURLのみ指定できます。" };
+  }
+  return { ok: true, value: u.toString() };
+}
+
 export const data = new SlashCommandBuilder()
   .setName("blacklist")
   .setDescription("このサーバーのブラックリストと照会設定を管理します")
@@ -195,9 +213,13 @@ export async function execute(interaction) {
   if (sub === "config") {
     const enabled = interaction.options.getBoolean("enabled", true);
     const appealUrl = interaction.options.getString("appeal_url", false)?.trim() ?? "";
+    const checked = validateAppealUrl(appealUrl);
+    if (!checked.ok) {
+      return interaction.editReply({ content: checked.error });
+    }
     const setting = await GuildSettingDB.upsert(guildId, {
       blacklist_status_enabled: enabled,
-      blacklist_appeal_url: appealUrl,
+      blacklist_appeal_url: checked.value,
     });
     return interaction.editReply({
       content: [

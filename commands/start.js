@@ -134,8 +134,8 @@ export async function execute(interaction) {
   const defaultMaxComments = clampMaxComments(process.env.MAX_COMMENTS || DEFAULT_MAX_COMMENTS);
   const requestedLimit = interaction.options.getInteger("limit", false);
   const maxComments = clampMaxComments(requestedLimit ?? defaultMaxComments);
-  const secretMode = interaction.options.getString("secret", false) ?? "allow";
-  const secretAllowed = secretMode !== "deny";
+  const secretMode = interaction.options.getString("secret", false) ?? "deny";
+  const secretAllowed = secretMode === "allow";
 
   // ユーザー単位で pending を 1 件に寄せて混乱を減らす
   await PendingAuthDB.removeByUserId(userId);

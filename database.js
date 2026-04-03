@@ -71,7 +71,7 @@ function initSchema() {
       code_hash    TEXT NOT NULL DEFAULT '',
       expires_at   INTEGER NOT NULL,
       max_comments INTEGER NOT NULL,
-      secret_allowed INTEGER NOT NULL DEFAULT 1
+      secret_allowed INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS active_sessions (
@@ -82,7 +82,7 @@ function initSchema() {
       aes_key           TEXT NOT NULL,
       created_at        INTEGER NOT NULL,
       max_comments      INTEGER NOT NULL,
-      secret_allowed    INTEGER NOT NULL DEFAULT 1,
+      secret_allowed    INTEGER NOT NULL DEFAULT 0,
       resume_token_hash TEXT
     );
 
@@ -171,11 +171,11 @@ function initSchema() {
   }
   const pendingCols = /** @type {{ name: string }[]} */ (db.prepare("PRAGMA table_info(pending_auths)").all());
   if (!pendingCols.some((c) => c.name === "secret_allowed")) {
-    db.exec(`ALTER TABLE pending_auths ADD COLUMN secret_allowed INTEGER NOT NULL DEFAULT 1`);
+    db.exec(`ALTER TABLE pending_auths ADD COLUMN secret_allowed INTEGER NOT NULL DEFAULT 0`);
   }
   const activeCols = /** @type {{ name: string }[]} */ (db.prepare("PRAGMA table_info(active_sessions)").all());
   if (!activeCols.some((c) => c.name === "secret_allowed")) {
-    db.exec(`ALTER TABLE active_sessions ADD COLUMN secret_allowed INTEGER NOT NULL DEFAULT 1`);
+    db.exec(`ALTER TABLE active_sessions ADD COLUMN secret_allowed INTEGER NOT NULL DEFAULT 0`);
   }
 }
 
@@ -320,7 +320,7 @@ export function migrateLegacyJsonIfNeeded() {
             String(row.code_hash || (row.code ? hashAuthCode(String(row.code), uid) : "")),
             Number(row.expires_at),
             clampMaxComments(row.max_comments ?? 30),
-            row.secret_allowed === false ? 0 : 1,
+            row.secret_allowed === true ? 1 : 0,
           ),
         );
       }
@@ -339,7 +339,7 @@ export function migrateLegacyJsonIfNeeded() {
             String(row.aes_key),
             Number(row.created_at ?? Date.now()),
             clampMaxComments(row.max_comments ?? 30),
-            row.secret_allowed === false ? 0 : 1,
+            row.secret_allowed === true ? 1 : 0,
             row.resume_token_hash != null && row.resume_token_hash !== ""
               ? String(row.resume_token_hash)
               : null,
@@ -489,7 +489,7 @@ export const PendingAuthDB = {
         codeHash,
         safeExpiresAt,
         maxComments,
-        record.secret_allowed === false ? 0 : 1,
+        record.secret_allowed === true ? 1 : 0,
       );
     });
     run();
@@ -574,7 +574,7 @@ export const ActiveSessionDB = {
         record.aes_key,
         safeCreatedAt,
         maxComments,
-        record.secret_allowed === false ? 0 : 1,
+        record.secret_allowed === true ? 1 : 0,
         record.resume_token_hash ?? null,
       );
     });
