@@ -5,6 +5,12 @@ export const data = new SlashCommandBuilder()
   .setName("my-status")
   .setDescription("自分のブラックリスト登録状況を確認します");
 
+function toDiscordClickableUrl(url) {
+  const u = (url ?? "").toString().trim();
+  if (!u) return "未設定";
+  return `<${u}>`;
+}
+
 export async function execute(interaction) {
   if (!interaction.guild) {
     return interaction.reply({
@@ -22,7 +28,7 @@ export async function execute(interaction) {
   const userId = interaction.user.id;
   const globalEntry = GlobalBlacklistDB.find(userId);
   if (globalEntry) {
-    const appealUrl = process.env.GLOBAL_BLACKLIST_APPEAL_URL || "未設定";
+    const appealUrl = toDiscordClickableUrl(process.env.GLOBAL_BLACKLIST_APPEAL_URL || "");
     return interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -53,6 +59,7 @@ export async function execute(interaction) {
 
   const guildEntry = LocalBlacklistDB.find(userId, interaction.guild.id);
   if (guildEntry) {
+    const appealUrl = toDiscordClickableUrl(guildSetting.blacklist_appeal_url);
     return interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -62,7 +69,7 @@ export async function execute(interaction) {
             [
               "あなたはギルド ブラックリストに入っています",
               "異議申し立てはこちら",
-              guildSetting.blacklist_appeal_url || "未設定",
+              appealUrl,
             ].join("\n"),
           )
           .setTimestamp(),
