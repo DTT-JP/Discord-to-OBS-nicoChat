@@ -4,7 +4,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readdirSync, promises as fs, existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { config as dotenvConfig } from "dotenv";
-import { isAdminOrOwner } from "../utils/moderation.js";
 import { isUpdateInProgress, tryStartUpdateJob, finishUpdateJob } from "../utils/updateManager.js";
 
 function normalizeNewlines(text) {
@@ -56,8 +55,17 @@ function getPm2App() {
 
 function isSpawnEnoentError(err) {
   const code = String(err?.code ?? "");
+  const errno = String(err?.errno ?? "");
   const msg = String(err?.message ?? "");
-  return code === "ENOENT" || msg.includes("spawn pm2") || msg.includes("ENOENT") || msg.includes("not found");
+  const repr = String(err ?? "");
+  return (
+    code === "ENOENT" ||
+    errno === "ENOENT" ||
+    msg.includes("ENOENT") ||
+    msg.includes("spawn pm2") ||
+    msg.includes("not found") ||
+    repr.includes("ENOENT")
+  );
 }
 
 function getUpdatePm2BinPath() {
@@ -290,7 +298,7 @@ export async function execute(interaction) {
 
   const botOwnerId = process.env.BOT_OWNER_ID?.trim();
   const isBotOwnerUser = !!botOwnerId && interaction.user?.id === botOwnerId;
-  const isAllowed = isBotOwnerUser || isAdminOrOwner(interaction);
+  const isAllowed = isBotOwnerUser;
   if (!isAllowed) {
     return interaction.reply({
       content: "❌ このコマンドは BOT管理者のみ実行できます。",
