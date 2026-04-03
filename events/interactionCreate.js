@@ -1,6 +1,7 @@
 import { Events, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB } from "../database.js";
 import { safeForLog } from "../utils/logSafe.js";
+import { parsePageCustomId, handleListPageButton } from "../utils/paginatedList.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -10,6 +11,24 @@ export const once  = false;
  * @param {import("discord.js").Client & { commands: Map<string, any> }} client
  */
 export async function execute(interaction, client) {
+  if (interaction.isButton()) {
+    const parsed = parsePageCustomId(interaction.customId);
+    if (parsed) {
+      try {
+        await handleListPageButton(interaction, parsed);
+      } catch (error) {
+        console.error("[interaction] 一覧ページボタン エラー:", safeForLog(error));
+        const payload = { content: "❌ 操作中にエラーが発生しました。", flags: MessageFlags.Ephemeral };
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp(payload).catch(() => {});
+        } else {
+          await interaction.reply(payload).catch(() => {});
+        }
+      }
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
   const subcommand = interaction.options.getSubcommand(false);
 

@@ -15,21 +15,28 @@ export async function execute(interaction) {
       {
         name:  "🔧 `/config` （サーバーオーナー・管理者のみ）",
         value: [
-          "`/config add_setup_role` — `/setup` を実行できるロールを追加",
-          "`/config del_setup_role` — 上記ロールを削除",
-          "`/config add_setup_user` — `/setup` を実行できるユーザーを追加",
-          "`/config del_setup_user` — 上記ユーザーを削除",
-          "`/config list` — `/setup` 実行許可の一覧",
+          "`/setup` 実行許可: `add_setup_role` / `del_setup_role` / `add_setup_user` / `del_setup_user`",
+          "一覧: `setup_role_list` / `setup_user_list`（`page` で開始ページ、◀▶ で送り）",
+          "`/blacklist` 操作許可: `ctrl_blacklist_role` / `remove_ctrl_blacklist_role` / `ctrl_blacklist_user` / `remove_ctrl_blacklist_user`",
+          "一覧: `ctrl_blacklist_role_list` / `ctrl_blacklist_user_list`",
         ].join("\n"),
         inline: false,
       },
       {
         name:  "⚙️ `/setup` （オーナー・管理者、または `/config` で許可された人）",
         value: [
-          "`/setup overview` — 拒否チャンネル・/start 許可・BL・URL の一覧",
-          "`/setup blacklist_info` — 自分のBL状況と異議申し立てURL",
-          "`/setup allow_start_*` — /start を誰に許可するか",
-          "拒否チャンネル・`/my-status` 照会の有効化・URL など",
+          "`overview` — 拒否チャンネル・/start 許可・オーバーレイURLの概要",
+          "`deny_channel_list` / `allow_start_role_list` / `allow_start_user_list` — 各10件/ページ・`page`・◀▶",
+          "`allow_start_*` / `remove_start_*` / 拒否チャンネルの追加・削除",
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name:  "🚫 `/blacklist` （オーナー・管理者、または `/config` の ctrl で許可）",
+        value: [
+          "`add` / `remove` / `list`（10件/ページ）",
+          "`config` — `/my-status` 照会の可否・サーバーBLの異議申し立てURL",
+          "`config_show` — 上記の現在値を表示",
         ].join("\n"),
         inline: false,
       },

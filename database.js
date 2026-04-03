@@ -80,6 +80,13 @@ function initSchema() {
       PRIMARY KEY (type, id, guild_id)
     );
 
+    CREATE TABLE IF NOT EXISTS blacklist_ctrl_principals (
+      type     TEXT NOT NULL,
+      id       TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      PRIMARY KEY (type, id, guild_id)
+    );
+
     CREATE TABLE IF NOT EXISTS deny_channels (
       guild_id   TEXT NOT NULL,
       channel_id TEXT NOT NULL,
@@ -607,6 +614,40 @@ export const SetupPrincipalDB = {
     const guildId = member.guild.id;
     const principals = db.prepare(
       "SELECT type, id FROM setup_principals WHERE guild_id = ?",
+    ).all(guildId);
+    for (const p of principals) {
+      if (p.type === "user" && p.id === member.id)           return true;
+      if (p.type === "role" && member.roles.cache.has(p.id)) return true;
+    }
+    return false;
+  },
+};
+
+export const BlacklistCtrlPrincipalDB = {
+  add(type, id, guildId) {
+    const run = db.transaction(() => {
+      db.prepare(
+        `INSERT OR IGNORE INTO blacklist_ctrl_principals (type, id, guild_id) VALUES (?,?,?)`,
+      ).run(type, id, guildId);
+    });
+    run();
+    return Promise.resolve();
+  },
+  remove(type, id, guildId) {
+    db.prepare(
+      `DELETE FROM blacklist_ctrl_principals WHERE type = ? AND id = ? AND guild_id = ?`,
+    ).run(type, id, guildId);
+    return Promise.resolve();
+  },
+  findByGuild(guildId) {
+    return db.prepare(
+      "SELECT type, id, guild_id FROM blacklist_ctrl_principals WHERE guild_id = ?",
+    ).all(guildId);
+  },
+  isAllowed(member) {
+    const guildId = member.guild.id;
+    const principals = db.prepare(
+      "SELECT type, id FROM blacklist_ctrl_principals WHERE guild_id = ?",
     ).all(guildId);
     for (const p of principals) {
       if (p.type === "user" && p.id === member.id)           return true;

@@ -1,30 +1,38 @@
-import {
-  SlashCommandBuilder,
-  EmbedBuilder,
-  PermissionFlagsBits,
-  MessageFlags,
-} from "discord.js";
-import { LocalBlacklistDB } from "../database.js";
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from "discord.js";
+import { LocalBlacklistDB, GuildSettingDB, BlacklistCtrlPrincipalDB } from "../database.js";
 import {
   isAdminOrOwner,
   parseTargetUser,
   computeExpireAt,
   formatRemaining,
-  truncateReason,
-  formatDateTime,
 } from "../utils/moderation.js";
+import { ListScope, replyPaginatedList } from "../utils/paginatedList.js";
+
+function canManageBlacklist(interaction) {
+  if (!interaction.guild || !interaction.member) return false;
+  if (isAdminOrOwner(interaction)) return true;
+  return BlacklistCtrlPrincipalDB.isAllowed(interaction.member);
+}
+
+function pageOpt(sub) {
+  return sub.addIntegerOption((opt) =>
+    opt.setName("page").setDescription("表示するページ（1から）").setMinValue(1).setRequired(false),
+  );
+}
 
 export const data = new SlashCommandBuilder()
   .setName("blacklist")
-  .setDescription("このサーバーのブラックリストを管理します（サーバーオーナー・管理者専用）")
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .setDescription("このサーバーのブラックリストと照会設定を管理します")
   .addSubcommand((sub) =>
     sub
       .setName("add")
       .setDescription("ユーザーをこのサーバーのブラックリストに追加します")
       .addStringOption((opt) => opt.setName("reason").setDescription("理由").setRequired(true))
       .addStringOption((opt) =>
-        opt.setName("duration_type").setDescription("期間種別").setRequired(true)
+        opt
+          .setName("duration_type")
+          .setDescription("期間種別")
+          .setRequired(true)
           .addChoices(
             { name: "分", value: "minute" },
             { name: "時間", value: "hour" },
@@ -37,7 +45,9 @@ export const data = new SlashCommandBuilder()
       )
       .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー（@メンション）").setRequired(false))
       .addStringOption((opt) => opt.setName("user_id").setDescription("対象ユーザーID").setRequired(false))
-      .addIntegerOption((opt) => opt.setName("duration_value").setDescription("期間の数値（無制限以外で必須）").setRequired(false).setMinValue(1)),
+      .addIntegerOption((opt) =>
+        opt.setName("duration_value").setDescription("期間の数値（無制限以外で必須）").setRequired(false).setMinValue(1),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -46,25 +56,50 @@ export const data = new SlashCommandBuilder()
       .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー").setRequired(false))
       .addStringOption((opt) => opt.setName("user_id").setDescription("対象ユーザーID").setRequired(false)),
   )
-  .addSubcommand((sub) => sub.setName("list").setDescription("このサーバーのブラックリストを表示します"))
+  .addSubcommand((sub) =>
+    pageOpt(sub.setName("list").setDescription("このサーバーのブラックリスト一覧（10件/ページ）")),
+  )
   .addSubcommand((sub) =>
     sub
-      .setName("show")
-      .setDescription("特定ユーザーの詳細情報を表示")
-      .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー").setRequired(true)),
-  );
+      .setName("config")
+      .setDescription("/my-status 照会の可否とサーバーBLの異議申し立て先URLを設定")
+      .addBooleanOption((opt) => opt.setName("enabled").setDescription("照会を有効にするか").setRequired(true))
+      .addStringOption((opt) =>
+        opt.setName("appeal_url").setDescription("異議申し立て先URL（enabled=true 時推奨）").setRequired(false),
+      ),
+  )
+  .addSubcommand((sub) => sub.setName("config_show").setDescription("上記 config の現在値を表示"));
 
 export async function execute(interaction) {
-  if (!isAdminOrOwner(interaction)) {
-    return interaction.reply({ content: "❌ このコマンドはサーバーオーナーまたは管理者権限を持つユーザーのみ実行できます。", flags: MessageFlags.Ephemeral });
-  }
   if (!interaction.guild) {
     return interaction.reply({ content: "❌ このコマンドはサーバー内でのみ実行できます。", flags: MessageFlags.Ephemeral });
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  if (!canManageBlacklist(interaction)) {
+    return interaction.reply({
+      content:
+        "❌ このコマンドはサーバーオーナー・管理者、または `/config` の `ctrl_blacklist_*` で許可されたユーザーのみ実行できます。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   const sub = interaction.options.getSubcommand();
   const guildId = interaction.guild.id;
+
+  if (sub === "config_show") {
+    const gs = GuildSettingDB.find(guildId);
+    const embed = new EmbedBuilder()
+      .setTitle("⚙️ /blacklist config — 現在の値")
+      .setColor(0x5865f2)
+      .addFields(
+        { name: "/my-status 照会", value: gs.blacklist_status_enabled ? "有効" : "無効", inline: true },
+        { name: "異議申し立てURL", value: gs.blacklist_appeal_url?.trim() ? gs.blacklist_appeal_url : "未設定", inline: false },
+      )
+      .setTimestamp();
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (sub === "add") {
     const target = parseTargetUser(interaction);
@@ -98,38 +133,22 @@ export async function execute(interaction) {
     return interaction.editReply({ content: `✅ <@${target.userId}> をサーバーブラックリストから削除しました。` });
   }
 
-  if (sub === "list") {
-    const entries = LocalBlacklistDB.findByGuild(guildId);
-    if (entries.length === 0) return interaction.editReply({ content: "📋 このサーバーのブラックリストは空です。" });
+  if (sub === "list") return replyPaginatedList(interaction, ListScope.BLACKLIST_ENTRIES);
 
-    const lines = entries.map((e, i) => `${i + 1}. <@${e.user_id}> / ID: \`${e.user_id}\` / 残り: ${formatRemaining(e.expires_at)} / 理由: ${truncateReason(e.reason)}`);
-    const embed = new EmbedBuilder()
-      .setTitle("🚫 サーバーブラックリスト")
-      .setColor(0xed4245)
-      .setDescription(lines.join("\n"))
-      .setTimestamp();
-    return interaction.editReply({ embeds: [embed] });
+  if (sub === "config") {
+    const enabled = interaction.options.getBoolean("enabled", true);
+    const appealUrl = interaction.options.getString("appeal_url", false)?.trim() ?? "";
+    const setting = await GuildSettingDB.upsert(guildId, {
+      blacklist_status_enabled: enabled,
+      blacklist_appeal_url: appealUrl,
+    });
+    return interaction.editReply({
+      content: [
+        `✅ /my-status 照会: ${setting.blacklist_status_enabled ? "有効" : "無効"}`,
+        `異議申し立てURL: ${setting.blacklist_appeal_url || "未設定"}`,
+      ].join("\n"),
+    });
   }
 
-  const user = interaction.options.getUser("user", true);
-  const entry = LocalBlacklistDB.find(user.id, guildId);
-  if (!entry) return interaction.editReply({ content: `ℹ️ <@${user.id}> はこのサーバーのブラックリストに登録されていません。` });
-
-  const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-  const embed = new EmbedBuilder()
-    .setTitle("🔎 blacklist_show")
-    .setColor(0xed4245)
-    .addFields(
-      { name: "ユーザーID", value: entry.user_id, inline: true },
-      { name: "名前", value: user.tag, inline: true },
-      { name: "サーバー内表示名", value: member?.displayName ?? "取得不可", inline: true },
-      { name: "施行日時", value: formatDateTime(entry.added_at), inline: true },
-      { name: "どこのサーバー", value: interaction.guild.name, inline: true },
-      { name: "理由", value: entry.reason || "(理由なし)", inline: false },
-      { name: "残り期限", value: formatRemaining(entry.expires_at), inline: true },
-      { name: "設定期限", value: formatDateTime(entry.expires_at), inline: true },
-    )
-    .setTimestamp();
-
-  return interaction.editReply({ embeds: [embed] });
+  return interaction.editReply({ content: "❌ 不明なサブコマンドです。" });
 }
