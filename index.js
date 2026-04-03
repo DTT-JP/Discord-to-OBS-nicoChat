@@ -228,6 +228,19 @@ activeCleanupTimer.unref();
 async function shutdown(signal) {
   console.log(`\n[shutdown] ${signal} を受信しました。クリーンアップを開始します...`);
 
+  // pm2 stop/reload は一定時間内にプロセスを終了させる必要があるため、
+  // クリーンアップが詰まっても強制終了できるタイムアウトを用意します。
+  const shutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS ?? 15_000);
+  const shutdownTimer = setTimeout(() => {
+    console.error(`[shutdown] クリーンアップがタイムアウトしたため強制終了します（signal=${signal} timeoutMs=${shutdownTimeoutMs}）`);
+    try {
+      closeDatabase();
+    } catch {
+      // ignore
+    }
+    process.exit(0);
+  }, shutdownTimeoutMs);
+
   // タイマー停止
   clearInterval(cleanupTimer);
 
@@ -236,6 +249,14 @@ async function shutdown(signal) {
     setSocketShuttingDown(true);
     flushSessionsForProcessRestart();
     console.log("[shutdown] セッションを DB に保存（socket_id をクリア）しました");
+
+    // io.close() / httpServer.close() が完了するまで待ち続けないよう、
+    // 先に全ソケットを強制切断して早めにコネクションを解放します。
+    try {
+      io.sockets.sockets.forEach((socket) => socket.disconnect(true));
+    } catch {
+      // ignore
+    }
 
     // 2. 期限切れ pending_auth のみ削除
     await PendingAuthDB.removeExpired();
@@ -261,10 +282,12 @@ async function shutdown(signal) {
     console.log("[shutdown] SQLite をクローズしました");
 
     console.log("[shutdown] クリーンアップ完了。プロセスを終了します");
+    clearTimeout(shutdownTimer);
     process.exit(0);
 
   } catch (err) {
     console.error("[shutdown] クリーンアップ中にエラーが発生しました:", safeForLog(err));
+    clearTimeout(shutdownTimer);
     process.exit(1);
   }
 }

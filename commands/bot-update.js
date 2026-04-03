@@ -157,12 +157,65 @@ async function runPm2(action, repoRoot) {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  const killTimeoutMs = Number(process.env.UPDATE_PM2_KILL_TIMEOUT_MS ?? process.env.PM2_KILL_TIMEOUT ?? 5000);
+
+  const hasToken = (token) => extraArgs.some((a) => a === token || a.startsWith(`${token}=`));
+  const hasForce = hasToken("--force") || hasToken("-f");
+  const hasKillTimeout = hasToken("--kill-timeout");
+
+  const resolvePm2TargetArg = async ({ pm2CliPath }) => {
+    // UPDATE_PM2_APP に numeric が入ってる場合、pm2 の id と合ってないと「Process 0 not found」になり得るため、
+    // jlist から現在の対象を解決して “名前” を使うようにする。
+    const t = String(app).trim();
+    if (!t) return app;
+
+    const isNumeric = /^\d+$/.test(t);
+    const cmd = pm2CliPath ? process.execPath : "pm2";
+    const args = pm2CliPath ? [pm2CliPath, "jlist"] : ["jlist"];
+
+    let list;
+    try {
+      const { stdout } = await runCommand(cmd, args, { cwd: repoRoot });
+      list = JSON.parse(stdout);
+    } catch {
+      return app; // 解決できなければ従来通り
+    }
+
+    if (!Array.isArray(list)) return app;
+
+    for (const item of list) {
+      const env = item?.pm2_env ?? {};
+      const name = env?.name ?? item?.name ?? "";
+      const pmId = env?.pm_id ?? env?.pmId ?? env?.pm2_id ?? env?.pm2Id ?? "";
+      const pid = item?.pid ?? env?.pid ?? "";
+
+      if (isNumeric) {
+        if (String(pmId) === t) return String(name || t);
+        if (String(pid) === t) return String(name || t);
+      } else {
+        if (String(name) === t) return t;
+      }
+    }
+
+    return app;
+  };
+
   // --update-env が効かない/許可されていない環境があるため、まず試してダメなら外す
-  const argsWithUpdate = [action, app, "--update-env", ...extraArgs];
-  const argsWithoutUpdate = [action, app, ...extraArgs];
+  const pm2CliPath = await resolvePm2CliPath({ repoRoot });
+  const targetArg = await resolvePm2TargetArg({ pm2CliPath: pm2CliPath || "" });
+
+  const buildArgs = ({ includeUpdateEnv }) => {
+    const base = includeUpdateEnv ? [action, targetArg, "--update-env", ...extraArgs] : [action, targetArg, ...extraArgs];
+    // PM2 が kill できないケースに備えて、force / kill-timeout を付与する
+    if (!hasKillTimeout) base.push("--kill-timeout", String(killTimeoutMs));
+    if (!hasForce) base.push("--force");
+    return base;
+  };
+
+  const argsWithUpdate = buildArgs({ includeUpdateEnv: true });
+  const argsWithoutUpdate = buildArgs({ includeUpdateEnv: false });
 
   // PATH に pm2 が無い環境でも動くよう、可能なら常に絶対パス（node <pm2-cli>）で実行します。
-  const pm2CliPath = await resolvePm2CliPath({ repoRoot });
   if (pm2CliPath) {
     try {
       await runCommand(process.execPath, [pm2CliPath, ...argsWithUpdate], { cwd: repoRoot });
