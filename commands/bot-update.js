@@ -83,43 +83,22 @@ async function resolvePm2CliPath({ repoRoot }) {
 
   const candidates = [];
 
+  const addPm2BinCandidates = (baseDir) => {
+    // 拡張子付き（JS/ESM）を優先し、最後に `pm2`（拡張子なし）を試す。
+    candidates.push(join(baseDir, "pm2", "bin", "pm2.js"));
+    candidates.push(join(baseDir, "pm2", "bin", "pm2.cjs"));
+    candidates.push(join(baseDir, "pm2", "bin", "pm2.mjs"));
+    candidates.push(join(baseDir, "pm2", "bin", "pm2"));
+  };
+
   // repo 配下（通常は無いが念のため）
-  candidates.push(join(repoRoot, "node_modules", "pm2", "bin", "pm2"));
-  candidates.push(join(repoRoot, "node_modules", "pm2", "bin", "pm2.js"));
-
-  // Linux/macOS の典型的なグローバル位置
-  candidates.push("/usr/local/lib/node_modules/pm2/bin/pm2");
-  candidates.push("/usr/local/lib/node_modules/pm2/bin/pm2.js");
-  candidates.push("/usr/lib/node_modules/pm2/bin/pm2");
-  candidates.push("/usr/lib/node_modules/pm2/bin/pm2.js");
-  candidates.push("/opt/homebrew/lib/node_modules/pm2/bin/pm2");
-  candidates.push("/opt/homebrew/lib/node_modules/pm2/bin/pm2.js");
-
-  // Windows のよくある場所
-  const appData = (process.env.APPDATA || "").trim();
-  const localAppData = (process.env.LOCALAPPDATA || "").trim();
-  const userProfile = (process.env.USERPROFILE || "").trim();
-
-  if (appData) {
-    candidates.push(join(appData, "npm", "node_modules", "pm2", "bin", "pm2"));
-    candidates.push(join(appData, "npm", "node_modules", "pm2", "bin", "pm2.js"));
-  }
-  if (localAppData) {
-    candidates.push(join(localAppData, "npm", "node_modules", "pm2", "bin", "pm2"));
-    candidates.push(join(localAppData, "npm", "node_modules", "pm2", "bin", "pm2.js"));
-  }
-  if (userProfile) {
-    candidates.push(join(userProfile, "AppData", "Roaming", "npm", "node_modules", "pm2", "bin", "pm2"));
-    candidates.push(join(userProfile, "AppData", "Roaming", "npm", "node_modules", "pm2", "bin", "pm2.js"));
-  }
+  addPm2BinCandidates(join(repoRoot, "node_modules"));
 
   // OS横断: npm のグローバルインストール位置を読む（npm があれば一番確実）
   try {
+    // npm root -g は OS 依存の “node_modules” の親ディレクトリを返す
     const globalRoot = (await runCommand("npm", ["root", "-g"], { cwd: repoRoot })).stdout.trim();
-    if (globalRoot) {
-      candidates.push(join(globalRoot, "pm2", "bin", "pm2"));
-      candidates.push(join(globalRoot, "pm2", "bin", "pm2.js"));
-    }
+    if (globalRoot) addPm2BinCandidates(globalRoot);
   } catch {
     // ignore
   }
@@ -127,14 +106,38 @@ async function resolvePm2CliPath({ repoRoot }) {
   try {
     const prefix = (await runCommand("npm", ["prefix", "-g"], { cwd: repoRoot })).stdout.trim();
     if (prefix) {
-      candidates.push(join(prefix, "lib", "node_modules", "pm2", "bin", "pm2"));
-      candidates.push(join(prefix, "lib", "node_modules", "pm2", "bin", "pm2.js"));
-      candidates.push(join(prefix, "node_modules", "pm2", "bin", "pm2"));
-      candidates.push(join(prefix, "node_modules", "pm2", "bin", "pm2.js"));
+      // npm prefix は OS/環境により node_modules の置き場が揺れるため両方を試す
+      addPm2BinCandidates(join(prefix, "lib", "node_modules"));
+      addPm2BinCandidates(join(prefix, "node_modules"));
     }
   } catch {
     // ignore
   }
+
+  // Linux/macOS の典型的なグローバル位置（npm が無い/失敗した場合の保険）
+  const globalNodeModulesBases = [
+    "/usr/local/lib/node_modules",
+    "/usr/lib/node_modules",
+    "/opt/homebrew/lib/node_modules",
+  ];
+  for (const nodeModulesBase of globalNodeModulesBases) {
+    addPm2BinCandidates(nodeModulesBase);
+  }
+
+  // Windows のよくある場所（保険）
+  const appData = (process.env.APPDATA || "").trim();
+  const localAppData = (process.env.LOCALAPPDATA || "").trim();
+  const userProfile = (process.env.USERPROFILE || "").trim();
+  const username = (process.env.USERNAME || "").trim();
+  const homeDrive = (process.env.HOMEDRIVE || "").trim();
+  const homePath = (process.env.HOMEPATH || "").trim();
+  const homeRoot = homeDrive && homePath ? `${homeDrive}${homePath}` : "";
+
+  if (appData) addPm2BinCandidates(join(appData, "npm", "node_modules"));
+  if (localAppData) addPm2BinCandidates(join(localAppData, "npm", "node_modules"));
+  if (userProfile) addPm2BinCandidates(join(userProfile, "AppData", "Roaming", "npm", "node_modules"));
+  if (username) addPm2BinCandidates(join("C:\\Users", username, "AppData", "Roaming", "npm", "node_modules"));
+  if (homeRoot) addPm2BinCandidates(join(homeRoot, "AppData", "Roaming", "npm", "node_modules"));
 
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -158,26 +161,24 @@ async function runPm2(action, repoRoot) {
   const argsWithUpdate = [action, app, "--update-env", ...extraArgs];
   const argsWithoutUpdate = [action, app, ...extraArgs];
 
-  // まずは PATH 経由（最速）
+  // PATH に pm2 が無い環境でも動くよう、可能なら常に絶対パス（node <pm2-cli>）で実行します。
+  const pm2CliPath = await resolvePm2CliPath({ repoRoot });
+  if (pm2CliPath) {
+    try {
+      await runCommand(process.execPath, [pm2CliPath, ...argsWithUpdate], { cwd: repoRoot });
+      return { usedUpdateEnv: true };
+    } catch {
+      await runCommand(process.execPath, [pm2CliPath, ...argsWithoutUpdate], { cwd: repoRoot });
+      return { usedUpdateEnv: false };
+    }
+  }
+
+  // pm2-cli の探索に失敗した場合のみ PATH の pm2 を使う（最後の手段）
   try {
     await runCommand("pm2", argsWithUpdate);
     return { usedUpdateEnv: true };
-  } catch (e) {
-    if (!isSpawnEnoentError(e)) throw e;
-  }
-
-  // PATH 不在なら、pm2 CLI を絶対パスで解決して node で実行
-  const pm2CliPath = await resolvePm2CliPath({ repoRoot });
-  if (!pm2CliPath) {
-    throw new Error("pm2 を実行できるファイルを見つけられませんでした。UPDATE_PM2_BIN を絶対パスで設定してください。");
-  }
-
-  // --update-env が効かない/許可されない場合にも対応
-  try {
-    await runCommand(process.execPath, [pm2CliPath, ...argsWithUpdate], { cwd: repoRoot });
-    return { usedUpdateEnv: true };
   } catch {
-    await runCommand(process.execPath, [pm2CliPath, ...argsWithoutUpdate], { cwd: repoRoot });
+    await runCommand("pm2", argsWithoutUpdate);
     return { usedUpdateEnv: false };
   }
 }
@@ -287,7 +288,7 @@ export async function execute(interaction) {
 
   // PM2 起動時の env と現在の .env がズレることがあるため、
   // /bot-update 実行時にだけ .env を明示パスで読み直して必要キーを補完します。
-  dotenvConfig({ path: join(repoRoot, ".env"), override: false });
+  dotenvConfig({ path: join(repoRoot, ".env"), override: true });
 
   if (!interaction.guild) {
     return interaction.reply({

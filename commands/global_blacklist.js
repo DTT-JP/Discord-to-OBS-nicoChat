@@ -89,7 +89,7 @@ export async function execute(interaction) {
     return interaction.reply({ content: "❌ `BOT_OWNER_ID` が `.env` に設定されていません。", flags: MessageFlags.Ephemeral });
   }
   if (!isBotOwner(interaction)) {
-    return interaction.reply({ content: "❌ このコマンドはBot製作者のみ実行できます。", flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: "❌ このコマンドは BOT管理者のみ実行できます。", flags: MessageFlags.Ephemeral });
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });

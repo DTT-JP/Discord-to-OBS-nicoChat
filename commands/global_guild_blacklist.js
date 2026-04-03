@@ -104,7 +104,7 @@ export async function execute(interaction) {
   }
   if (!isBotOwner(interaction)) {
     return interaction.reply({
-      content: "❌ このコマンドはBot製作者のみ実行できます。",
+      content: "❌ このコマンドは BOT管理者のみ実行できます。",
       flags: MessageFlags.Ephemeral,
     });
   }

@@ -5,15 +5,25 @@ import { parsePageCustomId, handleListPageButton } from "../utils/paginatedList.
 import { isHelpComponentInteraction, handleHelpComponent } from "../commands/help.js";
 import { formatDateTime } from "../utils/moderation.js";
 import { isUpdateInProgress } from "../utils/updateManager.js";
+import { config as dotenvConfig } from "dotenv";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(__dirname, "..");
 
 /**
  * @param {import("discord.js").Interaction} interaction
  * @param {import("discord.js").Client & { commands: Map<string, any> }} client
  */
 export async function execute(interaction, client) {
+  // PM2 起動時などで CWD がズレると dotenv が読み込めないことがあるため、
+  // このイベント処理でも確実に `.env` を読み直して BOT_OWNER_ID 判定を安定させます。
+  dotenvConfig({ path: join(repoRoot, ".env"), override: false });
+
   // ── グローバルギルドブラックリストチェック ─────────
   // ブラックリスト対象ギルドでは、Bot管理者以外の利用を遮断する
   const botOwnerId = process.env.BOT_OWNER_ID?.trim();
@@ -28,7 +38,7 @@ export async function execute(interaction, client) {
       const expiresText = entry.expires_at == null ? "無期限" : formatDateTime(entry.expires_at);
       return interaction.reply({
         content: [
-          "❌ このサーバーではこのBOTは使えません。",
+          "❌ このコマンドは使用できません。",
           `理由: ${reasonPublic}`,
           `期限: ${expiresText}`,
           appealLine,
@@ -90,9 +100,9 @@ export async function execute(interaction, client) {
   // コマンド実行自体を遮断する（ローカルBLはコマンドは許可・OBSのみ遮断）
   const isMyStatusCheck = interaction.commandName === "my-status";
   const isBotUpdateCheck = interaction.commandName === "bot-update";
-  if (GlobalBlacklistDB.has(interaction.user.id) && !(isMyStatusCheck || isBotUpdateCheck)) {
+  if (GlobalBlacklistDB.has(interaction.user.id) && !(isMyStatusCheck || isBotUpdateCheck || isBotOwnerUser)) {
     return interaction.reply({
-      content: "このBotを利用する権限がありません。",
+      content: "❌ このコマンドは使用できません。",
       flags: MessageFlags.Ephemeral,
     });
   }
