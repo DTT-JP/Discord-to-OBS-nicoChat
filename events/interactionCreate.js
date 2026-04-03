@@ -24,11 +24,12 @@ export async function execute(interaction, client) {
       const appealUrl = process.env.GLOBAL_GUILD_BLACKLIST_APPEAL_URL?.trim();
       const appealLine = appealUrl ? `異議申し立てはこちら: ${appealUrl}` : "異議申し立てはこちら: (URL未設定)";
       const reasonPublic = entry.public_reason?.trim() ? entry.public_reason.trim() : "（理由なし）";
+      const expiresText = entry.expires_at == null ? "無期限" : formatDateTime(entry.expires_at);
       return interaction.reply({
         content: [
           "❌ このサーバーではこのBOTは使えません。",
-          `理由（公開向け）: ${reasonPublic}`,
-          `期限: 解除される日時（${formatDateTime(entry.expires_at)}）`,
+          `理由: ${reasonPublic}`,
+          `期限: ${expiresText}`,
           appealLine,
         ].join("\n"),
         flags: MessageFlags.Ephemeral,

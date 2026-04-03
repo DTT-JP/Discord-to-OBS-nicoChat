@@ -23,11 +23,12 @@ function buildGuildDm(guildName, entry) {
   const appealUrl = process.env.GLOBAL_GUILD_BLACKLIST_APPEAL_URL?.trim();
   const appealLine = appealUrl ? `異議申し立てはこちら: ${appealUrl}` : "異議申し立てはこちら: (URL未設定)";
   const publicReason = entry.public_reason?.trim() ? entry.public_reason.trim() : "（理由なし）";
+  const expiresText = entry.expires_at == null ? "無期限" : formatDateTime(entry.expires_at);
   return [
     "このサーバーではこのBOTは使えません。",
     `このBOTはサーバー（${guildName}）から退出しました。`,
-    `理由（公開向け）: ${publicReason}`,
-    `期限: 解除される日時（${formatDateTime(entry.expires_at)}）`,
+    `理由: ${publicReason}`,
+    `期限: ${expiresText}`,
     appealLine,
   ].join("\n");
 }
