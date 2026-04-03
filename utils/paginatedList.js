@@ -90,9 +90,10 @@ export function paginateSlice(items, page) {
 /**
  * @param {string} scope
  * @param {string} listKey guild id or `"global"`
- * @returns {string[]}
+ * @param {import("discord.js").Client | null} [client]
+ * @returns {Promise<string[]>}
  */
-export function getLinesForScope(scope, listKey) {
+export async function getLinesForScope(scope, listKey, client = null) {
   switch (scope) {
     case ListScope.CONFIG_SETUP_ROLE:
       return SetupPrincipalDB.findByGuild(listKey)
@@ -134,12 +135,15 @@ export function getLinesForScope(scope, listKey) {
           `<@${e.user_id}> / ID: \`${e.user_id}\` / 残り: ${formatRemaining(e.expires_at)} / 理由: ${truncateReason(e.reason)}`,
       );
     case ListScope.GLOBAL_GUILD_BL:
-      return GlobalGuildBlacklistDB.findAll().map((e) => {
-        const untilText = formatDateTime(e.expires_at);
-        const pubReason = truncateReason(e.public_reason);
-        const internal = truncateReason(e.internal_reason);
-        return `ギルドID: \`${e.guild_id}\` / 残り: ${formatRemaining(e.expires_at)} / 公開理由: ${pubReason} / 内部理由: ${internal} / 解除日時: ${untilText}`;
-      });
+      return await Promise.all(
+        GlobalGuildBlacklistDB.findAll().map(async (e) => {
+          let name = client?.guilds.cache.get(e.guild_id)?.name ?? null;
+          if (!name && client) {
+            name = (await client.guilds.fetch(e.guild_id).catch(() => null))?.name ?? null;
+          }
+          return `${name ?? "(不明)"} / ID: \`${e.guild_id}\``;
+        }),
+      );
     default:
       return [];
   }
@@ -205,8 +209,8 @@ function canUseListScope(interaction, scope) {
  * @param {string} listKey
  * @param {number} page
  */
-export function buildListEmbed(scope, listKey, page) {
-  const rawLines = getLinesForScope(scope, listKey);
+export async function buildListEmbed(scope, listKey, page, client = null) {
+  const rawLines = await getLinesForScope(scope, listKey, client);
   const { page: p, totalPages, slice, total } = paginateSlice(rawLines, page);
   const title = TITLES[scope] ?? "一覧";
   const color = COLORS[scope] ?? 0x5865f2;
@@ -259,7 +263,7 @@ export async function replyPaginatedList(interaction, scope, listKeyOverride = n
     return;
   }
   const page = interaction.options.getInteger("page", false) ?? 1;
-  const { embed, page: p, totalPages } = buildListEmbed(scope, listKey, page);
+  const { embed, page: p, totalPages } = await buildListEmbed(scope, listKey, page, interaction.client);
   const row = buildListArrowRow(scope, listKey, interaction.user.id, p, totalPages);
   await interaction.editReply({ embeds: [embed], components: [row] });
 }
@@ -297,7 +301,12 @@ export async function handleListPageButton(interaction, parsed) {
   if (parsed.direction === "prev") newPage = Math.max(1, curPage - 1);
   else newPage = Math.min(totalPages, curPage + 1);
 
-  const { embed, page, totalPages: tp } = buildListEmbed(parsed.scope, parsed.listKey, newPage);
+  const { embed, page, totalPages: tp } = await buildListEmbed(
+    parsed.scope,
+    parsed.listKey,
+    newPage,
+    interaction.client,
+  );
   const row = buildListArrowRow(parsed.scope, parsed.listKey, parsed.userId, page, tp);
 
   await interaction.deferUpdate();

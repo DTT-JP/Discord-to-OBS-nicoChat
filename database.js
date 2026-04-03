@@ -850,7 +850,7 @@ export const GlobalGuildBlacklistDB = {
     const now = Date.now();
     return db.prepare(
       "SELECT * FROM global_guild_blacklist WHERE guild_id = ? AND (expires_at IS NULL OR expires_at > ?)",
-    ).get(guildId) ?? undefined;
+    ).get(guildId, now) ?? undefined;
   },
   findAll() {
     const now = Date.now();

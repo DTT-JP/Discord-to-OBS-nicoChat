@@ -78,6 +78,12 @@ export const data = new SlashCommandBuilder()
       .addIntegerOption((opt) =>
         opt.setName("page").setDescription("表示するページ（1から）").setMinValue(1).setRequired(false),
       ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("show")
+      .setDescription("特定ギルドの詳細を表示")
+      .addStringOption((opt) => opt.setName("guild_id").setDescription("対象ギルドID").setRequired(true)),
   );
 
 export async function execute(interaction) {
@@ -159,6 +165,38 @@ export async function execute(interaction) {
 
   if (sub === "list") {
     return replyPaginatedList(interaction, ListScope.GLOBAL_GUILD_BL, "global");
+  }
+
+  if (sub === "show") {
+    const gid = parseGuildId(interaction);
+    if (gid.error) return interaction.editReply({ content: gid.error });
+
+    const entry = GlobalGuildBlacklistDB.find(gid.guildId);
+    if (!entry) {
+      return interaction.editReply({ content: `ℹ️ \`${gid.guildId}\` はグローバルギルドブラックリストに登録されていません。` });
+    }
+
+    const guild =
+      interaction.client.guilds.cache.get(gid.guildId) ??
+      (await interaction.client.guilds.fetch(gid.guildId).catch(() => null));
+    const guildName = guild?.name ?? "(不明)";
+
+    const embed = new EmbedBuilder()
+      .setTitle("🔎 global_guild_blacklist_show")
+      .setColor(0xed4245)
+      .addFields(
+        { name: "ギルドID", value: entry.guild_id, inline: true },
+        { name: "名前", value: guildName, inline: true },
+        { name: "施行日時", value: formatDateTime(entry.added_at), inline: true },
+        { name: "追加者", value: `<@${entry.added_by}>`, inline: true },
+        { name: "公開向け理由", value: entry.public_reason || "(理由なし)", inline: false },
+        { name: "内部理由", value: entry.internal_reason || "(理由なし)", inline: false },
+        { name: "残り期限", value: formatRemaining(entry.expires_at), inline: true },
+        { name: "設定期限", value: formatDateTime(entry.expires_at), inline: true },
+      )
+      .setTimestamp();
+
+    return interaction.editReply({ embeds: [embed] });
   }
 
   return interaction.editReply({ content: "❌ 不明なサブコマンドです。" });
