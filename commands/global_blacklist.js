@@ -6,11 +6,12 @@ import {
 import { GlobalBlacklistDB } from "../database.js";
 import {
   parseTargetUser,
-  computeExpireAt,
   formatRemaining,
-  truncateReason,
   formatDateTime,
+  formatUserTagForReply,
 } from "../utils/moderation.js";
+import { parseDurationValueAndUnit } from "../utils/blacklistDuration.js";
+import { ListScope, replyPaginatedList } from "../utils/paginatedList.js";
 
 function isBotOwner(interaction) {
   const ownerId = process.env.BOT_OWNER_ID?.trim();
@@ -26,7 +27,13 @@ export const data = new SlashCommandBuilder()
       .setDescription("ユーザーをグローバルブラックリストに追加")
       .addStringOption((opt) => opt.setName("reason").setDescription("理由").setRequired(true))
       .addStringOption((opt) =>
-        opt.setName("duration_type").setDescription("期間種別").setRequired(true)
+        opt.setName("duration_value").setDescription("期間の数値／無制限は infinity").setRequired(true),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("duration_unit")
+          .setDescription("単位（無制限は両方 infinity）")
+          .setRequired(true)
           .addChoices(
             { name: "分", value: "minute" },
             { name: "時間", value: "hour" },
@@ -34,26 +41,45 @@ export const data = new SlashCommandBuilder()
             { name: "週", value: "week" },
             { name: "月(30日)", value: "month" },
             { name: "年", value: "year" },
-            { name: "無制限", value: "unlimited" },
+            { name: "無制限（値も infinity）", value: "infinity" },
           ),
       )
-      .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー").setRequired(false))
-      .addStringOption((opt) => opt.setName("user_id").setDescription("対象ユーザーID").setRequired(false))
-      .addIntegerOption((opt) => opt.setName("duration_value").setDescription("期間の数値（無制限以外で必須）").setRequired(false).setMinValue(1)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("対象（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("対象のユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     sub
       .setName("remove")
       .setDescription("ユーザーをグローバルブラックリストから削除")
-      .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー").setRequired(false))
-      .addStringOption((opt) => opt.setName("user_id").setDescription("対象ユーザーID").setRequired(false)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("対象（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("対象のユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
-  .addSubcommand((sub) => sub.setName("list").setDescription("グローバルブラックリストを表示"))
+  .addSubcommand((sub) =>
+    sub
+      .setName("list")
+      .setDescription("グローバルブラックリストを表示（10件/ページ）")
+      .addIntegerOption((opt) =>
+        opt.setName("page").setDescription("表示するページ（1から）").setMinValue(1).setRequired(false),
+      ),
+  )
   .addSubcommand((sub) =>
     sub
       .setName("show")
       .setDescription("特定ユーザーの詳細情報を表示")
-      .addUserOption((opt) => opt.setName("user").setDescription("対象ユーザー").setRequired(true)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("対象（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("対象のユーザーID（どちらか必須）").setRequired(false),
+      ),
   );
 
 export async function execute(interaction) {
@@ -73,13 +99,9 @@ export async function execute(interaction) {
     if (target.error) return interaction.editReply({ content: target.error });
 
     const reason = interaction.options.getString("reason", true);
-    const durationType = interaction.options.getString("duration_type", true);
-    const durationValue = interaction.options.getInteger("duration_value", false);
-    if (durationType !== "unlimited" && !durationValue) {
-      return interaction.editReply({ content: "❌ 無制限以外では `duration_value` を指定してください。" });
-    }
-
-    const expiresAt = computeExpireAt(durationType, durationValue);
+    const dur = parseDurationValueAndUnit(interaction);
+    if (dur.error) return interaction.editReply({ content: dur.error });
+    const expiresAt = dur.expiresAt;
     const added = await GlobalBlacklistDB.add(
       target.userId,
       interaction.user.id,
@@ -87,11 +109,12 @@ export async function execute(interaction) {
       expiresAt,
       interaction.guildId ?? "DM",
     );
-    if (!added) return interaction.editReply({ content: `⚠️ \`${target.userId}\` はすでに登録されています。` });
+    const label = await formatUserTagForReply(interaction.client, target);
+    if (!added) return interaction.editReply({ content: `⚠️ **${label}** はすでに登録されています。` });
 
     return interaction.editReply({
       content: [
-        `🚫 \`${target.userId}\` をグローバルブラックリストに追加しました。`,
+        `🚫 **${label}**（<@${target.userId}>）をグローバルブラックリストに追加しました。`,
         `理由: ${reason}`,
         `残り期間: ${formatRemaining(expiresAt)}`,
       ].join("\n"),
@@ -101,27 +124,28 @@ export async function execute(interaction) {
   if (sub === "remove") {
     const target = parseTargetUser(interaction);
     if (target.error) return interaction.editReply({ content: target.error });
+    const label = await formatUserTagForReply(interaction.client, target);
     const removed = await GlobalBlacklistDB.remove(target.userId);
-    if (!removed) return interaction.editReply({ content: `⚠️ \`${target.userId}\` は登録されていません。` });
-    return interaction.editReply({ content: `✅ \`${target.userId}\` をグローバルブラックリストから削除しました。` });
+    if (!removed) return interaction.editReply({ content: `⚠️ **${label}** は登録されていません。` });
+    return interaction.editReply({ content: `✅ **${label}** をグローバルブラックリストから削除しました。` });
   }
 
   if (sub === "list") {
-    const entries = GlobalBlacklistDB.findAll();
-    if (entries.length === 0) return interaction.editReply({ content: "📋 グローバルブラックリストは空です。" });
-
-    const lines = entries.map((e, i) => `${i + 1}. <@${e.user_id}> / ID: \`${e.user_id}\` / 残り: ${formatRemaining(e.expires_at)} / 理由: ${truncateReason(e.reason)}`);
-    const embed = new EmbedBuilder()
-      .setTitle("🚫 グローバルブラックリスト")
-      .setColor(0xed4245)
-      .setDescription(lines.join("\n"))
-      .setTimestamp();
-    return interaction.editReply({ embeds: [embed] });
+    return replyPaginatedList(interaction, ListScope.GLOBAL_BL, "global");
   }
 
-  const user = interaction.options.getUser("user", true);
-  const entry = GlobalBlacklistDB.find(user.id);
-  if (!entry) return interaction.editReply({ content: `ℹ️ <@${user.id}> はグローバルブラックリストに登録されていません。` });
+  const target = parseTargetUser(interaction);
+  if (target.error) return interaction.editReply({ content: target.error });
+
+  const entry = GlobalBlacklistDB.find(target.userId);
+  if (!entry) {
+    return interaction.editReply({
+      content: `ℹ️ \`${target.userId}\` はグローバルブラックリストに登録されていません。`,
+    });
+  }
+
+  const displayUser = target.user ?? (await interaction.client.users.fetch(target.userId).catch(() => null));
+  const nameLine = displayUser?.tag ?? `(API未取得) \`${target.userId}\``;
 
   const guildText = entry.added_in_guild_id === "DM" ? "DM" : `<#${entry.added_in_guild_id}> / \`${entry.added_in_guild_id}\``;
   const embed = new EmbedBuilder()
@@ -129,7 +153,7 @@ export async function execute(interaction) {
     .setColor(0xed4245)
     .addFields(
       { name: "ユーザーID", value: entry.user_id, inline: true },
-      { name: "名前", value: user.tag, inline: true },
+      { name: "名前", value: nameLine, inline: true },
       { name: "施行日時", value: formatDateTime(entry.added_at), inline: true },
       { name: "どこのサーバー", value: guildText, inline: false },
       { name: "理由", value: entry.reason || "(理由なし)", inline: false },

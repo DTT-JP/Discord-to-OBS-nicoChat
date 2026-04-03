@@ -53,6 +53,7 @@ AES-256-GCM 暗号化・2 段階認証・複数サーバー対応のセルフホ
 - グローバル / サーバー別ブラックリスト
 - サーバーごとの設定分離（SQLite + ギルド単位の暗号化設定）
 - `/status` による CPU・メモリ・バージョン・セッション情報の表示
+- 一覧系コマンドは **10 件／ページ**、**◀ ▶** ボタンと **`page` オプション**でページ移動
 
 ---
 
@@ -128,7 +129,7 @@ cp .env.example .env
 npm run deploy-commands
 ```
 
-グローバル登録のため、反映まで最大約 1 時間かかる場合があります。ギルドのみに試す場合は `deploy-commands-guild.js` を利用できます。
+グローバル登録のため、反映まで最大約 1 時間かかる場合があります。コードやサブコマンドを変えたら **必ず再実行**してください（未登録のコマンドはクライアントに出ません）。ギルドのみに試す場合は `deploy-commands-guild.js` を利用できます。
 
 ---
 
@@ -160,23 +161,25 @@ npm run dev
 
 ## 使い方（概要）
 
-### 初回: `/start` を誰に許可するか
+### 初回セットアップ（権限まわり）
 
-サーバーオーナーまたは管理者が **`/config`** でロール・ユーザーを許可リストに追加します（詳細は `commands/config.js`）。
+1. **サーバーオーナーまたは管理者（Administrator）** が **`/config`** で次を行います。
+   - だれが **`/setup`** を触れるか: `add_setup_role` / `add_setup_user` など（一覧は `setup_role_list` / `setup_user_list`）。
+   - だれが **`/blacklist`**（サーバー別 BL・照会設定）を触れるか: `ctrl_blacklist_role` / `ctrl_blacklist_user` など（一覧は `ctrl_blacklist_role_list` / `ctrl_blacklist_user_list`）。
+2. オーナー・管理者または `/config` で許可された担当が **`/setup`** で次を行います。
+   - だれが **`/start`** できるか: `allow_start_role` / `allow_start_user` など。
+   - 拒否チャンネル（`/start` で指定禁止）の追加・一覧など。
+3. **`/blacklist`**（設定の詳細・`/my-status` の可否など）は [コマンドリファレンス](#コマンドリファレンス) を参照。
 
-```
-/config allow_role role:@配信者
-/config allow_user user:@ユーザー
-/config list
-```
-
-拒否チャンネルや `/my-status` 用設定は **`/setup`**（`commands/setup.js`）で行います。
+ユーザー指定は **`user`（@メンション）** と **`user_id`（17〜20 桁）** の **どちらか一方** で指定できます。
 
 ### OBS 配信の流れ
 
-1. **`/start channel:#チャンネル [limit:数値]`** — DM にオーバーレイ URL が届く  
-2. OBS でブラウザソースに URL を貼り付け — 認証コードが表示される  
-3. **`/auth [6桁コード]`** — 認証完了後にコメントが流れる  
+1. **`/start channel:#チャンネル [limit:数値]`**（**サーバー内**。許可ロール／ユーザー、またはオーナー・管理者）  
+   → **DM** に **「OBS用URLを開く」リンクボタン** と **コピー用のコードブロック（URL 1 行）** が届きます。
+2. OBS のブラウザソースにその URL を貼る → **6 桁の認証コード**が表示されます。
+3. **`/auth code:XXXXXX`** を **`/start` と同じサーバーのテキストチャンネル**で実行（**DM 不可**）。  
+   オーバーレイ画面にも同旨の案内があります。
 
 メッセージの色・位置・装飾の詳細は **[docs/message-format.md](docs/message-format.md)** を参照してください。
 
@@ -188,43 +191,58 @@ npm run dev
 
 ## コマンドリファレンス
 
-### 一般ユーザー向け（グローバル BL 対象外）
+### 一般（グローバル BL 対象外に限り実行可）
 
 | コマンド | 説明 |
 |---|---|
 | `/help` | ヘルプ表示 |
-| `/status` | CPU・メモリ・バージョン・自分のセッション状況。**グローバルブラックリストに入っていないユーザーなら実行可**（`events/interactionCreate.js`） |
+| `/status` | CPU・メモリ・バージョン・自分のセッション状況 |
+| `/my-status` | 自分の BL 照会（サーバー設定で有効な場合） |
 
-### `/config` で許可されたユーザー（＋管理者による `/config` 本体）
-
-| コマンド | 説明 |
-|---|---|
-| `/start` | セッション開始（DM に URL） |
-| `/auth` | 認証コード入力（試行制限あり） |
-| `/setlimit` | 同時表示上限の変更 |
-| `/secret` | セッションエフェクト（要許可・`commands/secret.js` 参照） |
-
-### 管理者・オーナー向け
+### `/start` 許可ユーザーもしくはサーバーオーナー・管理者
 
 | コマンド | 説明 |
 |---|---|
-| `/config` | `/start` 許可リスト、`/setup` 実行権限の管理（`commands/config.js`） |
-| `/setup` | 拒否チャンネル、`/my-status` 系サーバー設定など（`commands/setup.js`） |
-| `/blacklist` | サーバー別ローカル BL（管理者） |
+| `/start` | セッション開始。DM に URL（リンクボタン＋コピー用ブロック） |
+| `/auth` | **同じサーバー内**で 6 桁コード入力（試行制限あり・**DM 不可**） |
+| `/setlimit` | 配信中の同時表示上限を変更 |
+| `/secret` | セッションエフェクト（`commands/secret.js`） |
 
-### 製作者専用（`BOT_OWNER_ID`）
+### サーバーオーナー・管理者のみ（`/config`）
 
 | コマンド | 説明 |
 |---|---|
-| `/global_blacklist` | グローバル BL（`commands/global_blacklist.js`） |
+| `/config` | `/setup` 実行許可、`/blacklist` **操作**許可の追加・削除。一覧サブコマンドは **10 件／ページ**・`page`・◀▶ |
+
+### サーバーオーナー・管理者、または `/config` で許可されたユーザー（`/setup`）
+
+| コマンド | 説明 |
+|---|---|
+| `/setup` | 拒否チャンネル、`/start` 許可ロール／ユーザーの追加・削除、`overview`、各種 `_list`（ページング同上） |
+
+### サーバーオーナー・管理者、または `/config` の `ctrl_blacklist_*` で許可（`/blacklist`）
+
+| コマンド | 説明 |
+|---|---|
+| `/blacklist add` など | サーバー別ローカル BL の追加・削除・**ページ付き**一覧 |
+| `/blacklist config` | `/my-status` 照会の可否・異議申し立て URL |
+| `/blacklist config_show` | 上記の現在値 |
+
+`add` の期限は **`duration_value`**（数値または無制限時は `infinity`）と **`duration_unit`**（分〜年、無制限時は `infinity`）の **組み合わせ**で指定します（詳細は実装またはエラーメッセージ参照）。
+
+### 製作者専用（`.env` の `BOT_OWNER_ID`）
+
+| コマンド | 説明 |
+|---|---|
+| `/global_blacklist` | グローバル BL。`list` も **ページ付き**。`add` の期限指定は `/blacklist add` と同様の `duration_value` / `duration_unit` |
 
 ---
 
 ## OBS の設定
 
 1. ソースの「+」→ **ブラウザ**
-2. **URL** — `/start` で DM に届いた URL  
-3. **幅・高さ** — 配信解像度に合わせる（例: 1920×1080）  
+2. **URL** — `/start` で DM に届いた URL（リンクを開くか、コードブロックからコピー）
+3. **幅・高さ** — 配信解像度に合わせる（例: 1920×1080）
 4. **カスタム CSS** — 空のまま  
 5. **ページが表示されなくなったときにブラウザをシャットダウン** — チェックを外す  
 

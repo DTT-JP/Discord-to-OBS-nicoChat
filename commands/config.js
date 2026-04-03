@@ -4,7 +4,7 @@ import {
   MessageFlags,
 } from "discord.js";
 import { SetupPrincipalDB, BlacklistCtrlPrincipalDB } from "../database.js";
-import { isAdminOrOwner } from "../utils/moderation.js";
+import { isAdminOrOwner, parseTargetUser, formatUserTagForReply } from "../utils/moderation.js";
 import { ListScope, replyPaginatedList } from "../utils/paginatedList.js";
 
 function pageOpt(sub) {
@@ -33,13 +33,23 @@ export const data = new SlashCommandBuilder()
     sub
       .setName("add_setup_user")
       .setDescription("/setup 実行を許可するユーザーを追加します")
-      .addUserOption((opt) => opt.setName("user").setDescription("許可するユーザー").setRequired(true)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("許可するユーザー（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("同上・17〜20桁のユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     sub
       .setName("del_setup_user")
       .setDescription("/setup 実行許可ユーザーを削除します")
-      .addUserOption((opt) => opt.setName("user").setDescription("削除するユーザー").setRequired(true)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("削除するユーザー（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("同上・ユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     pageOpt(
@@ -78,13 +88,23 @@ export const data = new SlashCommandBuilder()
     sub
       .setName("ctrl_blacklist_user")
       .setDescription("/blacklist を実行できるユーザーを追加します")
-      .addUserOption((opt) => opt.setName("user").setDescription("許可するユーザー").setRequired(true)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("許可するユーザー（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("同上・ユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     sub
       .setName("remove_ctrl_blacklist_user")
       .setDescription("/blacklist 操作許可ユーザーを削除します")
-      .addUserOption((opt) => opt.setName("user").setDescription("削除するユーザー").setRequired(true)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("削除するユーザー（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("同上・ユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     pageOpt(
@@ -124,14 +144,18 @@ export async function execute(interaction) {
     return interaction.editReply({ content: `🗑️ ロール **${role.name}** を /setup 実行許可から削除しました。` });
   }
   if (sub === "add_setup_user") {
-    const user = interaction.options.getUser("user", true);
-    await SetupPrincipalDB.add("user", user.id, guildId);
-    return interaction.editReply({ content: `✅ ユーザー **${user.tag}** を /setup 実行許可に追加しました。` });
+    const target = parseTargetUser(interaction);
+    if (target.error) return interaction.editReply({ content: target.error });
+    await SetupPrincipalDB.add("user", target.userId, guildId);
+    const label = await formatUserTagForReply(interaction.client, target);
+    return interaction.editReply({ content: `✅ ユーザー **${label}** を /setup 実行許可に追加しました。` });
   }
   if (sub === "del_setup_user") {
-    const user = interaction.options.getUser("user", true);
-    await SetupPrincipalDB.remove("user", user.id, guildId);
-    return interaction.editReply({ content: `🗑️ ユーザー **${user.tag}** を /setup 実行許可から削除しました。` });
+    const target = parseTargetUser(interaction);
+    if (target.error) return interaction.editReply({ content: target.error });
+    await SetupPrincipalDB.remove("user", target.userId, guildId);
+    const label = await formatUserTagForReply(interaction.client, target);
+    return interaction.editReply({ content: `🗑️ ユーザー **${label}** を /setup 実行許可から削除しました。` });
   }
 
   if (sub === "ctrl_blacklist_role") {
@@ -145,14 +169,18 @@ export async function execute(interaction) {
     return interaction.editReply({ content: `🗑️ ロール **${role.name}** を /blacklist 操作許可から削除しました。` });
   }
   if (sub === "ctrl_blacklist_user") {
-    const user = interaction.options.getUser("user", true);
-    await BlacklistCtrlPrincipalDB.add("user", user.id, guildId);
-    return interaction.editReply({ content: `✅ ユーザー **${user.tag}** を /blacklist 操作許可に追加しました。` });
+    const target = parseTargetUser(interaction);
+    if (target.error) return interaction.editReply({ content: target.error });
+    await BlacklistCtrlPrincipalDB.add("user", target.userId, guildId);
+    const label = await formatUserTagForReply(interaction.client, target);
+    return interaction.editReply({ content: `✅ ユーザー **${label}** を /blacklist 操作許可に追加しました。` });
   }
   if (sub === "remove_ctrl_blacklist_user") {
-    const user = interaction.options.getUser("user", true);
-    await BlacklistCtrlPrincipalDB.remove("user", user.id, guildId);
-    return interaction.editReply({ content: `🗑️ ユーザー **${user.tag}** を /blacklist 操作許可から削除しました。` });
+    const target = parseTargetUser(interaction);
+    if (target.error) return interaction.editReply({ content: target.error });
+    await BlacklistCtrlPrincipalDB.remove("user", target.userId, guildId);
+    const label = await formatUserTagForReply(interaction.client, target);
+    return interaction.editReply({ content: `🗑️ ユーザー **${label}** を /blacklist 操作許可から削除しました。` });
   }
 
   if (sub === "setup_role_list") return replyPaginatedList(interaction, ListScope.CONFIG_SETUP_ROLE);

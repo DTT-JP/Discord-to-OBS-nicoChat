@@ -33,6 +33,14 @@ const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS   = 5 * 60 * 1000; // 5分
 
 export async function execute(interaction) {
+  if (!interaction.guild) {
+    return interaction.reply({
+      content:
+        "❌ `/auth` は **`/start` を実行したサーバーのテキストチャンネル** で実行してください（DM では認証できません）。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   const member = interaction.member;
   if (!member || (!isAdminOrOwner(interaction) && !AllowedPrincipalDB.isAllowed(member))) {
     return interaction.reply({
@@ -93,6 +101,19 @@ export async function execute(interaction) {
     });
   }
 
+  const watchCh = await interaction.client.channels.fetch(pending.channel_id).catch(() => null);
+  if (
+    !watchCh ||
+    !("guildId" in watchCh) ||
+    !watchCh.guildId ||
+    watchCh.guildId !== interaction.guild.id
+  ) {
+    return interaction.editReply({
+      content:
+        "❌ **このサーバーでは認証できません。** `/start` を実行した**同じサーバー**のチャンネルで `/auth` してください。",
+    });
+  }
+
   // 認証成功 → 試行カウントをリセット
   authAttempts.delete(userId);
 
@@ -123,7 +144,7 @@ export async function execute(interaction) {
   const embed = new EmbedBuilder()
     .setTitle("✅ 認証完了")
     .setColor(0x57f287)
-    .setDescription("OBSオーバーレイの接続が確立されました。")
+    .setDescription("OBSオーバーレイの接続が確立しました。次回の認証も**サーバー内のチャンネル**で `/auth` を実行してください。")
     .addFields(
       { name: "📡 監視チャンネル",  value: `<#${pending.channel_id}>`, inline: true },
       { name: "💬 同時表示上限",    value: `${maxComments} 件`,        inline: true },

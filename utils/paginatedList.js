@@ -11,13 +11,12 @@ import {
   DenyChannelDB,
   AllowedPrincipalDB,
   LocalBlacklistDB,
+  GlobalBlacklistDB,
 } from "../database.js";
 import { isAdminOrOwner, formatDateTime, formatRemaining, truncateReason } from "./moderation.js";
 
 export const PAGE_SIZE = 10;
 const PREFIX = "listpg";
-
-/** @typedef {import("discord.js").ButtonInteraction | import("discord.js").ChatInputCommandInteraction} ListInteraction */
 
 export const ListScope = {
   CONFIG_SETUP_ROLE: "cfg_sr",
@@ -28,6 +27,7 @@ export const ListScope = {
   SETUP_START_ROLE: "su_rr",
   SETUP_START_USER: "su_ru",
   BLACKLIST_ENTRIES: "bl_li",
+  GLOBAL_BL: "gbl",
 };
 
 const TITLES = {
@@ -39,6 +39,7 @@ const TITLES = {
   [ListScope.SETUP_START_ROLE]: "🎬 /setup — /start 許可ロール",
   [ListScope.SETUP_START_USER]: "🎬 /setup — /start 許可ユーザー",
   [ListScope.BLACKLIST_ENTRIES]: "🚫 /blacklist — サーバー登録一覧",
+  [ListScope.GLOBAL_BL]: "🚫 /global_blacklist — 一覧",
 };
 
 const COLORS = {
@@ -50,7 +51,25 @@ const COLORS = {
   [ListScope.SETUP_START_ROLE]: 0x57f287,
   [ListScope.SETUP_START_USER]: 0x57f287,
   [ListScope.BLACKLIST_ENTRIES]: 0xed4245,
+  [ListScope.GLOBAL_BL]: 0xed4245,
 };
+
+const FOOTER_RE = /ページ (\d+)\/(\d+)/;
+
+/**
+ * @param {import("discord.js").Embed} [embed]
+ */
+function parsePageFromFooter(embed) {
+  const t = embed?.footer?.text ?? "";
+  const m = t.match(FOOTER_RE);
+  if (!m) return { page: 1, totalPages: 1 };
+  const page = parseInt(m[1], 10);
+  const totalPages = parseInt(m[2], 10);
+  return {
+    page: Number.isFinite(page) ? page : 1,
+    totalPages: Number.isFinite(totalPages) ? totalPages : 1,
+  };
+}
 
 /**
  * @param {string[]} items
@@ -66,44 +85,49 @@ export function paginateSlice(items, page) {
 
 /**
  * @param {string} scope
- * @param {string} guildId
+ * @param {string} listKey guild id or `"global"`
  * @returns {string[]}
  */
-export function getLinesForScope(scope, guildId) {
+export function getLinesForScope(scope, listKey) {
   switch (scope) {
     case ListScope.CONFIG_SETUP_ROLE:
-      return SetupPrincipalDB.findByGuild(guildId)
+      return SetupPrincipalDB.findByGuild(listKey)
         .filter((p) => p.type === "role")
         .map((p) => `<@&${p.id}>`);
     case ListScope.CONFIG_SETUP_USER:
-      return SetupPrincipalDB.findByGuild(guildId)
+      return SetupPrincipalDB.findByGuild(listKey)
         .filter((p) => p.type === "user")
         .map((p) => `<@${p.id}>`);
     case ListScope.CONFIG_BL_CTRL_ROLE:
-      return BlacklistCtrlPrincipalDB.findByGuild(guildId)
+      return BlacklistCtrlPrincipalDB.findByGuild(listKey)
         .filter((p) => p.type === "role")
         .map((p) => `<@&${p.id}>`);
     case ListScope.CONFIG_BL_CTRL_USER:
-      return BlacklistCtrlPrincipalDB.findByGuild(guildId)
+      return BlacklistCtrlPrincipalDB.findByGuild(listKey)
         .filter((p) => p.type === "user")
         .map((p) => `<@${p.id}>`);
     case ListScope.SETUP_DENY:
-      return DenyChannelDB.findByGuild(guildId).map(
+      return DenyChannelDB.findByGuild(listKey).map(
         (e) =>
           `<#${e.channel_id}> / 追加者: <@${e.added_by}> / ${formatDateTime(e.added_at)}`,
       );
     case ListScope.SETUP_START_ROLE:
-      return AllowedPrincipalDB.findByGuild(guildId)
+      return AllowedPrincipalDB.findByGuild(listKey)
         .filter((p) => p.type === "role")
         .map((p) => `<@&${p.id}>`);
     case ListScope.SETUP_START_USER:
-      return AllowedPrincipalDB.findByGuild(guildId)
+      return AllowedPrincipalDB.findByGuild(listKey)
         .filter((p) => p.type === "user")
         .map((p) => `<@${p.id}>`);
     case ListScope.BLACKLIST_ENTRIES:
-      return LocalBlacklistDB.findByGuild(guildId).map(
+      return LocalBlacklistDB.findByGuild(listKey).map(
         (e) =>
           `<@${e.user_id}> / 残り: ${formatRemaining(e.expires_at)} / 理由: ${truncateReason(e.reason)}`,
+      );
+    case ListScope.GLOBAL_BL:
+      return GlobalBlacklistDB.findAll().map(
+        (e) =>
+          `<@${e.user_id}> / ID: \`${e.user_id}\` / 残り: ${formatRemaining(e.expires_at)} / 理由: ${truncateReason(e.reason)}`,
       );
     default:
       return [];
@@ -111,13 +135,11 @@ export function getLinesForScope(scope, guildId) {
 }
 
 /**
- * @param {string} scope
- * @param {string} guildId
- * @param {string} userId
- * @param {number} page
+ * prev / next で一意な custom_id にする（同一ページへの移動で重複しない）
+ * @param {"prev"|"next"} direction
  */
-export function buildPageCustomId(scope, guildId, userId, page) {
-  return `${PREFIX}:${scope}:${guildId}:${userId}:${page}`;
+export function buildNavCustomId(scope, listKey, userId, direction) {
+  return `${PREFIX}:${scope}:${listKey}:${userId}:${direction}`;
 }
 
 /**
@@ -126,10 +148,9 @@ export function buildPageCustomId(scope, guildId, userId, page) {
 export function parsePageCustomId(customId) {
   const parts = customId.split(":");
   if (parts[0] !== PREFIX || parts.length !== 5) return null;
-  const [, scope, guildId, userId, pageStr] = parts;
-  const page = parseInt(pageStr, 10);
-  if (!Number.isFinite(page) || page < 1) return null;
-  return { scope, guildId, userId, page };
+  const [, scope, listKey, userId, direction] = parts;
+  if (direction !== "prev" && direction !== "next") return null;
+  return { scope, listKey, userId, direction };
 }
 
 /**
@@ -137,34 +158,40 @@ export function parsePageCustomId(customId) {
  * @param {string} scope
  */
 function canUseListScope(interaction, scope) {
-  if (!interaction.guild || !interaction.member) return false;
-  const admin = isAdminOrOwner(interaction);
+  const admin = interaction.guild ? isAdminOrOwner(interaction) : false;
   switch (scope) {
     case ListScope.CONFIG_SETUP_ROLE:
     case ListScope.CONFIG_SETUP_USER:
     case ListScope.CONFIG_BL_CTRL_ROLE:
     case ListScope.CONFIG_BL_CTRL_USER:
-      return admin;
+      return !!(interaction.guild && admin);
     case ListScope.SETUP_DENY:
     case ListScope.SETUP_START_ROLE:
     case ListScope.SETUP_START_USER:
+      if (!interaction.guild || !interaction.member) return false;
       if (admin) return true;
       return SetupPrincipalDB.isAllowed(interaction.member);
     case ListScope.BLACKLIST_ENTRIES:
+      if (!interaction.guild || !interaction.member) return false;
       if (admin) return true;
       return BlacklistCtrlPrincipalDB.isAllowed(interaction.member);
+    case ListScope.GLOBAL_BL: {
+      const ownerId = process.env.BOT_OWNER_ID?.trim();
+      return !!(ownerId && interaction.user.id === ownerId);
+    }
     default:
       return false;
   }
 }
 
 /**
+ * listKey: guild id または global 一覧用 `"global"`
  * @param {string} scope
- * @param {string} guildId
+ * @param {string} listKey
  * @param {number} page
  */
-export function buildListEmbed(scope, guildId, page) {
-  const rawLines = getLinesForScope(scope, guildId);
+export function buildListEmbed(scope, listKey, page) {
+  const rawLines = getLinesForScope(scope, listKey);
   const { page: p, totalPages, slice, total } = paginateSlice(rawLines, page);
   const title = TITLES[scope] ?? "一覧";
   const color = COLORS[scope] ?? 0x5865f2;
@@ -185,22 +212,20 @@ export function buildListEmbed(scope, guildId, page) {
 
 /**
  * @param {string} scope
- * @param {string} guildId
+ * @param {string} listKey
  * @param {string} userId
  * @param {number} page
  * @param {number} totalPages
  */
-export function buildListArrowRow(scope, guildId, userId, page, totalPages) {
-  const prevPage = Math.max(1, page - 1);
-  const nextPage = Math.min(totalPages, page + 1);
+export function buildListArrowRow(scope, listKey, userId, page, totalPages) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(buildPageCustomId(scope, guildId, userId, prevPage))
+      .setCustomId(buildNavCustomId(scope, listKey, userId, "prev"))
       .setLabel("◀")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(page <= 1),
     new ButtonBuilder()
-      .setCustomId(buildPageCustomId(scope, guildId, userId, nextPage))
+      .setCustomId(buildNavCustomId(scope, listKey, userId, "next"))
       .setLabel("▶")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(page >= totalPages),
@@ -210,18 +235,23 @@ export function buildListArrowRow(scope, guildId, userId, page, totalPages) {
 /**
  * @param {import("discord.js").ChatInputCommandInteraction} interaction
  * @param {string} scope
+ * @param {string | null} [listKeyOverride] 省略時は interaction.guild.id（グローバル一覧は `"global"`）
  */
-export async function replyPaginatedList(interaction, scope) {
-  const guildId = interaction.guild.id;
+export async function replyPaginatedList(interaction, scope, listKeyOverride = null) {
+  const listKey = listKeyOverride ?? interaction.guild?.id;
+  if (!listKey) {
+    await interaction.editReply({ content: "❌ この操作にはサーバー情報が必要です。" });
+    return;
+  }
   const page = interaction.options.getInteger("page", false) ?? 1;
-  const { embed, page: p, totalPages } = buildListEmbed(scope, guildId, page);
-  const row = buildListArrowRow(scope, guildId, interaction.user.id, p, totalPages);
+  const { embed, page: p, totalPages } = buildListEmbed(scope, listKey, page);
+  const row = buildListArrowRow(scope, listKey, interaction.user.id, p, totalPages);
   await interaction.editReply({ embeds: [embed], components: [row] });
 }
 
 /**
  * @param {import("discord.js").ButtonInteraction} interaction
- * @param {{ scope: string, guildId: string, userId: string, page: number }} parsed
+ * @param {{ scope: string, listKey: string, userId: string, direction: "prev"|"next" }} parsed
  */
 export async function handleListPageButton(interaction, parsed) {
   if (interaction.user.id !== parsed.userId) {
@@ -230,12 +260,16 @@ export async function handleListPageButton(interaction, parsed) {
       flags: MessageFlags.Ephemeral,
     });
   }
-  if (!interaction.guild || interaction.guild.id !== parsed.guildId) {
-    return interaction.reply({
-      content: "❌ サーバーが一致しません。",
-      flags: MessageFlags.Ephemeral,
-    });
+
+  if (parsed.listKey !== "global") {
+    if (!interaction.guild || interaction.guild.id !== parsed.listKey) {
+      return interaction.reply({
+        content: "❌ サーバーが一致しません。",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
   }
+
   if (!canUseListScope(interaction, parsed.scope)) {
     return interaction.reply({
       content: "❌ この一覧を表示する権限がありません。",
@@ -243,14 +277,13 @@ export async function handleListPageButton(interaction, parsed) {
     });
   }
 
-  const { embed, page, totalPages } = buildListEmbed(parsed.scope, parsed.guildId, parsed.page);
-  const row = buildListArrowRow(
-    parsed.scope,
-    parsed.guildId,
-    parsed.userId,
-    page,
-    totalPages,
-  );
+  const { page: curPage, totalPages } = parsePageFromFooter(interaction.message.embeds[0]);
+  let newPage = curPage;
+  if (parsed.direction === "prev") newPage = Math.max(1, curPage - 1);
+  else newPage = Math.min(totalPages, curPage + 1);
+
+  const { embed, page, totalPages: tp } = buildListEmbed(parsed.scope, parsed.listKey, newPage);
+  const row = buildListArrowRow(parsed.scope, parsed.listKey, parsed.userId, page, tp);
 
   await interaction.deferUpdate();
   await interaction.editReply({ embeds: [embed], components: [row] });

@@ -9,7 +9,7 @@ import {
   SetupPrincipalDB,
   AllowedPrincipalDB,
 } from "../database.js";
-import { isAdminOrOwner } from "../utils/moderation.js";
+import { isAdminOrOwner, parseTargetUser, formatUserTagForReply } from "../utils/moderation.js";
 import { ListScope, replyPaginatedList } from "../utils/paginatedList.js";
 
 function canManageSetup(interaction) {
@@ -86,13 +86,23 @@ export const data = new SlashCommandBuilder()
     sub
       .setName("allow_start_user")
       .setDescription("/start を許可するユーザーを追加")
-      .addUserOption((opt) => opt.setName("user").setDescription("許可するユーザー").setRequired(true)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("許可するユーザー（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("同上・ユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     sub
       .setName("remove_start_user")
       .setDescription("/start 許可ユーザーを削除")
-      .addUserOption((opt) => opt.setName("user").setDescription("削除するユーザー").setRequired(true)),
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("削除するユーザー（@メンション）").setRequired(false),
+      )
+      .addStringOption((opt) =>
+        opt.setName("user_id").setDescription("同上・ユーザーID（どちらか必須）").setRequired(false),
+      ),
   )
   .addSubcommand((sub) =>
     pageOpt(sub.setName("allow_start_role_list").setDescription("/start 許可ロール一覧（10件/ページ）")),
@@ -133,14 +143,18 @@ export async function execute(interaction) {
     return interaction.editReply({ content: `🗑️ ロール **${role.name}** を /start 許可から削除しました。` });
   }
   if (sub === "allow_start_user") {
-    const user = interaction.options.getUser("user", true);
-    await AllowedPrincipalDB.add("user", user.id, guildId);
-    return interaction.editReply({ content: `✅ ユーザー **${user.tag}** を /start 許可に追加しました。` });
+    const target = parseTargetUser(interaction);
+    if (target.error) return interaction.editReply({ content: target.error });
+    await AllowedPrincipalDB.add("user", target.userId, guildId);
+    const label = await formatUserTagForReply(interaction.client, target);
+    return interaction.editReply({ content: `✅ ユーザー **${label}** を /start 許可に追加しました。` });
   }
   if (sub === "remove_start_user") {
-    const user = interaction.options.getUser("user", true);
-    await AllowedPrincipalDB.remove("user", user.id, guildId);
-    return interaction.editReply({ content: `🗑️ ユーザー **${user.tag}** を /start 許可から削除しました。` });
+    const target = parseTargetUser(interaction);
+    if (target.error) return interaction.editReply({ content: target.error });
+    await AllowedPrincipalDB.remove("user", target.userId, guildId);
+    const label = await formatUserTagForReply(interaction.client, target);
+    return interaction.editReply({ content: `🗑️ ユーザー **${label}** を /start 許可から削除しました。` });
   }
 
   if (sub === "deny_channel_list") return replyPaginatedList(interaction, ListScope.SETUP_DENY);

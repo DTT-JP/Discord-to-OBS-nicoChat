@@ -24,6 +24,8 @@
 
 ## Bot 運用
 
+スラッシュコマンドの定義（`commands/*.js`）を変えたあとは、**`npm run deploy-commands`** で Discord へ再登録してください（グローバル登録の反映には最大約 1 時間かかる場合があります）。
+
 | 変数 | 説明 |
 |---|---|
 | `BOT_OWNER_ID` | `/global_blacklist` 等の製作者専用コマンドに使用 |

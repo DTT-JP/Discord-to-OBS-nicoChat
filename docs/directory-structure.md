@@ -14,18 +14,19 @@ discord-obs-overlay/
 │   └── parser.js             # メッセージパーサー
 ├── commands/
 │   ├── auth.js
-│   ├── blacklist.js          # サーバー別ローカル BL
-│   ├── config.js             # /start 許可・/setup 実行許可の管理
+│   ├── blacklist.js          # サーバー別ローカル BL・照会設定
+│   ├── config.js             # /setup・/blacklist 操作の実行許可管理
 │   ├── global_blacklist.js
 │   ├── help.js
 │   ├── my-status.js
 │   ├── secret.js
 │   ├── setlimit.js
-│   ├── setup.js              # deny_channel / blacklist_status 等
+│   ├── setup.js              # 拒否チャンネル、/start 許可など
+│   ├── start.js              # セッション開始・DM に URL
 │   └── status.js
 ├── events/
 │   ├── ready.js
-│   ├── interactionCreate.js
+│   ├── interactionCreate.js  # スラッシュ＋一覧ページのボタン
 │   └── messageCreate.js
 ├── socket/
 │   ├── server.js             # Express + Socket.io + helmet
@@ -34,11 +35,13 @@ discord-obs-overlay/
 │   ├── index.html
 │   └── script.js
 ├── utils/
+│   ├── blacklistDuration.js  # BL 追加時の期限パース
 │   ├── crypto.js
 │   ├── corsPolicy.js
 │   ├── deriveGuildKey.js
 │   ├── logSafe.js
-│   ├── moderation.js
+│   ├── moderation.js         # isAdminOrOwner、parseTargetUser 等
+│   ├── paginatedList.js      # 一覧 10 件/ページ・◀▶
 │   ├── systemMonitor.js
 │   └── version.js
 └── docs/
@@ -50,4 +53,4 @@ discord-obs-overlay/
     └── troubleshooting.md
 ```
 
-※ スラッシュコマンドは `deploy-commands.js` で登録されます。定義ファイルは `commands/*.js` を参照してください。
+※ スラッシュコマンドは `deploy-commands.js` が `commands/*.js` を読み込んで登録します。
