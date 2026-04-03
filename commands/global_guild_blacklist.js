@@ -123,18 +123,19 @@ export async function execute(interaction) {
     if (dur.error) return interaction.editReply({ content: dur.error });
     const expiresAt = dur.expiresAt;
 
+    const guild =
+      interaction.client.guilds.cache.get(gid.guildId) ??
+      (await interaction.client.guilds.fetch(gid.guildId).catch(() => null));
+    const guildName = guild?.name ?? "(不明)";
     const added = await GlobalGuildBlacklistDB.add(
       gid.guildId,
+      guildName,
       interaction.user.id,
       publicReason,
       internalReason,
       expiresAt,
     );
     // 既に登録されていても上書きはせず、（BOTが参加済みなら）DM＋退出だけ保証する
-
-    const guild =
-      interaction.client.guilds.cache.get(gid.guildId) ??
-      (await interaction.client.guilds.fetch(gid.guildId).catch(() => null));
 
     const ownerId = guild?.ownerId;
     const existingEntry = await GlobalGuildBlacklistDB.find(gid.guildId);
@@ -154,8 +155,8 @@ export async function execute(interaction) {
     return interaction.editReply({
       content: [
         added
-          ? `🚫 ギルド \`${gid.guildId}\` をグローバルギルドブラックリストに追加しました。`
-          : `ℹ️ ギルド \`${gid.guildId}\` は既にグローバルギルドブラックリストに登録済みです（上書きしません）。`,
+          ? `🚫 ギルド \`${gid.guildId}\`（${existingEntry?.guild_name || guildName}）をグローバルギルドブラックリストに追加しました。`
+          : `ℹ️ ギルド \`${gid.guildId}\`（${existingEntry?.guild_name || guildName}）は既にグローバルギルドブラックリストに登録済みです（上書きしません）。`,
         guild ? "DM送信と退出を実行しました。" : "（このボットが未参加だったため退出は行いません）",
         `公開向け理由（登録値）: ${responsePublicReason}`,
         `残り期間（登録値）: ${formatRemaining(responseExpiresAt)}`,
@@ -167,9 +168,10 @@ export async function execute(interaction) {
     const gid = parseGuildId(interaction);
     if (gid.error) return interaction.editReply({ content: gid.error });
 
+    const existing = GlobalGuildBlacklistDB.find(gid.guildId);
     const removed = await GlobalGuildBlacklistDB.remove(gid.guildId);
-    if (!removed) return interaction.editReply({ content: `⚠️ ギルド \`${gid.guildId}\` は登録されていません。` });
-    return interaction.editReply({ content: `✅ ギルド \`${gid.guildId}\` をグローバルギルドブラックリストから削除しました。` });
+    if (!removed) return interaction.editReply({ content: `⚠️ ギルド \`${gid.guildId}\`（${existing?.guild_name || "(不明)"}）は登録されていません。` });
+    return interaction.editReply({ content: `✅ ギルド \`${gid.guildId}\`（${existing?.guild_name || "(不明)"}）をグローバルギルドブラックリストから削除しました。` });
   }
 
   if (sub === "list") {
@@ -188,14 +190,14 @@ export async function execute(interaction) {
     const guild =
       interaction.client.guilds.cache.get(gid.guildId) ??
       (await interaction.client.guilds.fetch(gid.guildId).catch(() => null));
-    const guildName = guild?.name ?? "(不明)";
+    const guildName = entry.guild_name || guild?.name || "(不明)";
 
     const embed = new EmbedBuilder()
       .setTitle("🔎 global_guild_blacklist_show")
       .setColor(0xed4245)
       .addFields(
         { name: "ギルドID", value: entry.guild_id, inline: true },
-        { name: "名前", value: guildName, inline: true },
+        { name: "サーバー名", value: guildName, inline: true },
         { name: "施行日時", value: formatDateTime(entry.added_at), inline: true },
         { name: "追加者", value: `<@${entry.added_by}>`, inline: true },
         { name: "公開向け理由", value: entry.public_reason || "(理由なし)", inline: false },

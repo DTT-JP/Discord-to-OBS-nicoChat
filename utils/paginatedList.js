@@ -137,11 +137,12 @@ export async function getLinesForScope(scope, listKey, client = null) {
     case ListScope.GLOBAL_GUILD_BL:
       return await Promise.all(
         GlobalGuildBlacklistDB.findAll().map(async (e) => {
-          let name = client?.guilds.cache.get(e.guild_id)?.name ?? null;
+          let name = e.guild_name?.trim() || null;
+          if (!name) name = client?.guilds.cache.get(e.guild_id)?.name ?? null;
           if (!name && client) {
             name = (await client.guilds.fetch(e.guild_id).catch(() => null))?.name ?? null;
           }
-          return `${name ?? "(不明)"} / ID: \`${e.guild_id}\``;
+          return `ID: \`${e.guild_id}\` / サーバー名: ${name ?? "(不明)"}`;
         }),
       );
     default:

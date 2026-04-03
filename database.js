@@ -127,6 +127,7 @@ function initSchema() {
 
     CREATE TABLE IF NOT EXISTS global_guild_blacklist (
       guild_id         TEXT PRIMARY KEY,
+      guild_name       TEXT NOT NULL DEFAULT '',
       added_by         TEXT NOT NULL,
       added_at         INTEGER NOT NULL,
       public_reason    TEXT NOT NULL DEFAULT '',
@@ -158,6 +159,12 @@ function initSchema() {
       v TEXT NOT NULL
     );
   `);
+
+  // 既存DB互換: 旧スキーマに列が無い場合は後から追加する
+  const ggblCols = /** @type {{ name: string }[]} */ (db.prepare("PRAGMA table_info(global_guild_blacklist)").all());
+  if (!ggblCols.some((c) => c.name === "guild_name")) {
+    db.exec(`ALTER TABLE global_guild_blacklist ADD COLUMN guild_name TEXT NOT NULL DEFAULT ''`);
+  }
 }
 
 initSchema();
@@ -267,6 +274,11 @@ export function migrateLegacyJsonIfNeeded() {
     `INSERT OR IGNORE INTO global_blacklist
      (user_id, added_by, added_at, reason, expires_at, added_in_guild_id)
      VALUES (?,?,?,?,?,?)`,
+  );
+  const insGgbl = db.prepare(
+    `INSERT OR IGNORE INTO global_guild_blacklist
+     (guild_id, guild_name, added_by, added_at, public_reason, internal_reason, expires_at)
+     VALUES (?,?,?,?,?,?,?)`,
   );
   const insLoc = db.prepare(
     `INSERT OR IGNORE INTO local_blacklist
@@ -382,6 +394,23 @@ export function migrateLegacyJsonIfNeeded() {
             String(x.reason ?? ""),
             x.expires_at == null ? null : Number(x.expires_at),
             String(x.added_in_guild_id ?? ""),
+          ),
+        );
+      }
+
+      for (const e of /** @type {unknown[]} */ (data.global_guild_blacklist ?? [])) {
+        if (!e || typeof e !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (e);
+        if (!x.guild_id) continue;
+        bump(
+          insGgbl.run(
+            String(x.guild_id),
+            String(x.guild_name ?? ""),
+            String(x.added_by ?? ""),
+            Number(x.added_at ?? Date.now()),
+            String(x.public_reason ?? ""),
+            String(x.internal_reason ?? ""),
+            x.expires_at == null ? null : Number(x.expires_at),
           ),
         );
       }
@@ -864,7 +893,7 @@ export const GlobalBlacklistDB = {
 };
 
 export const GlobalGuildBlacklistDB = {
-  add(guildId, addedBy, publicReason = "", internalReason = "", expiresAt = null) {
+  add(guildId, guildName = "", addedBy, publicReason = "", internalReason = "", expiresAt = null) {
     // "上書きしない"ため、既に有効期限内の登録がある場合は無視する
     // （期限切れなら新規登録として扱う）
     let inserted = false;
@@ -886,9 +915,9 @@ export const GlobalGuildBlacklistDB = {
 
       db.prepare(
         `INSERT INTO global_guild_blacklist
-         (guild_id, added_by, added_at, public_reason, internal_reason, expires_at)
-         VALUES (?,?,?,?,?,?)`,
-      ).run(guildId, addedBy, Date.now(), publicReason, internalReason, expiresAt);
+         (guild_id, guild_name, added_by, added_at, public_reason, internal_reason, expires_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).run(guildId, guildName, addedBy, Date.now(), publicReason, internalReason, expiresAt);
 
       inserted = true;
     });
