@@ -43,7 +43,7 @@ export async function execute(interaction) {
   if (!member || !AllowedPrincipalDB.isAllowed(member)) {
     return interaction.reply({
       content:
-        "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/setup allow_role` または `/setup allow_user` での許可を依頼してください。",
+        "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/config allow_role` または `/config allow_user` での許可を依頼してください。",
       flags: MessageFlags.Ephemeral,
     });
   }

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -120,130 +120,261 @@ function initSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_active_resume
       ON active_sessions(resume_token_hash)
       WHERE resume_token_hash IS NOT NULL AND resume_token_hash != '';
+
+    CREATE TABLE IF NOT EXISTS _meta (
+      k TEXT PRIMARY KEY,
+      v TEXT NOT NULL
+    );
   `);
 }
 
 initSchema();
 
+function getMeta(key) {
+  const row = db.prepare("SELECT v FROM _meta WHERE k = ?").get(key);
+  return row?.v ?? null;
+}
+
+function setMeta(key, value) {
+  db.prepare(
+    `INSERT INTO _meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
+  ).run(key, value);
+}
+
 /**
- * lowdb の db.json を一度だけ SQLite へ取り込む（トランザクション）
+ * 旧 lowdb の db.json ルートを正規化する（`blacklist` → `global_blacklist` など）
+ * @param {unknown} raw
+ * @returns {Record<string, unknown> | null}
+ */
+function normalizeLegacyJsonRoot(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const data = /** @type {Record<string, unknown>} */ ({ ...raw });
+
+  const gb = data.global_blacklist;
+  const hasGb = Array.isArray(gb) && gb.length > 0;
+  const bl  = data.blacklist;
+  if (!hasGb && Array.isArray(bl) && bl.length > 0) {
+    data.global_blacklist = bl.map((e) => {
+      const x = /** @type {Record<string, unknown>} */ (e && typeof e === "object" ? e : {});
+      return {
+        user_id:           String(x.user_id ?? ""),
+        added_by:          String(x.added_by ?? ""),
+        added_at:          typeof x.added_at === "number" ? x.added_at : Date.now(),
+        reason:            String(x.reason ?? ""),
+        expires_at:        x.expires_at == null ? null : Number(x.expires_at),
+        added_in_guild_id: String(x.added_in_guild_id ?? ""),
+      };
+    });
+  }
+
+  return data;
+}
+
+/**
+ * db.json が存在し、前回取り込み以降に更新されていれば SQLite へマージする（1 トランザクション）。
+ * - pending / active が空でない SQLite でも、許可ロール・ギルド設定・BL などは取り込める。
+ * - `db.json` の mtime を `_meta.legacy_json_mtime` に保存し、未変更ならスキップ（高速起動）。
+ * - 手動で db.json を編集した場合は mtime が変わるため再マージされる（INSERT OR IGNORE で重複は無視）。
  */
 export function migrateLegacyJsonIfNeeded() {
-  const nP = /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM pending_auths").get()).c;
-  const nA = /** @type {{ c: number }} */ (db.prepare("SELECT COUNT(*) AS c FROM active_sessions").get()).c;
-  if (nP > 0 || nA > 0) return;
   if (!existsSync(LEGACY_JSON)) return;
+
+  let st;
+  try {
+    st = statSync(LEGACY_JSON);
+  } catch {
+    return;
+  }
+
+  const mtimeKey = String(st.mtimeMs);
+  if (getMeta("legacy_json_mtime") === mtimeKey) return;
 
   let raw;
   try {
     raw = JSON.parse(readFileSync(LEGACY_JSON, "utf8"));
-  } catch {
-    console.warn("[database] db.json の読み込みに失敗しました（移行スキップ）");
+  } catch (err) {
+    console.warn(
+      "[database] db.json の読み込みに失敗しました（移行スキップ）:",
+      err instanceof Error ? err.message : err,
+    );
     return;
   }
 
-  const txn = db.transaction(() => {
-    for (const r of raw.pending_auths ?? []) {
-      const th = r.token_hash || (r.token ? hashToken(r.token) : "");
-      if (!th) continue;
-      db.prepare(
-        `INSERT OR IGNORE INTO pending_auths
-         (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments)
-         VALUES (?,?,?,?,?,?,?)`,
-      ).run(
-        th,
-        r.socket_id ?? "",
-        r.user_id,
-        r.channel_id,
-        r.code_hash || (r.code ? hashAuthCode(r.code, r.user_id) : ""),
-        r.expires_at,
-        r.max_comments ?? 30,
-      );
-    }
+  const data = normalizeLegacyJsonRoot(raw);
+  if (!data) {
+    console.warn("[database] db.json のルートがオブジェクトではないため移行をスキップしました");
+    return;
+  }
 
-    for (const r of raw.active_sessions ?? []) {
-      const th = r.token_hash || (r.token ? hashToken(r.token) : "");
-      if (!th) continue;
-      db.prepare(
-        `INSERT OR IGNORE INTO active_sessions
-         (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, resume_token_hash)
-         VALUES (?,?,?,?,?,?,?,?)`,
-      ).run(
-        th,
-        r.socket_id ?? "",
-        r.user_id,
-        r.channel_id,
-        r.aes_key,
-        r.created_at ?? Date.now(),
-        r.max_comments ?? 30,
-        r.resume_token_hash ?? null,
-      );
-    }
+  const insPending = db.prepare(
+    `INSERT OR IGNORE INTO pending_auths
+     (token_hash, socket_id, user_id, channel_id, code_hash, expires_at, max_comments)
+     VALUES (?,?,?,?,?,?,?)`,
+  );
+  const insActive = db.prepare(
+    `INSERT OR IGNORE INTO active_sessions
+     (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, resume_token_hash)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  );
+  const insAllowed = db.prepare(
+    `INSERT OR IGNORE INTO allowed_principals (type, id, guild_id) VALUES (?,?,?)`,
+  );
+  const insSetup = db.prepare(
+    `INSERT OR IGNORE INTO setup_principals (type, id, guild_id) VALUES (?,?,?)`,
+  );
+  const insDeny = db.prepare(
+    `INSERT OR IGNORE INTO deny_channels (guild_id, channel_id, added_by, added_at) VALUES (?,?,?,?)`,
+  );
+  const insGuild = db.prepare(
+    `INSERT OR IGNORE INTO guild_settings (guild_id, settings_ciphertext) VALUES (?,?)`,
+  );
+  const insGbl = db.prepare(
+    `INSERT OR IGNORE INTO global_blacklist
+     (user_id, added_by, added_at, reason, expires_at, added_in_guild_id)
+     VALUES (?,?,?,?,?,?)`,
+  );
+  const insLoc = db.prepare(
+    `INSERT OR IGNORE INTO local_blacklist
+     (user_id, guild_id, added_by, added_at, reason, expires_at)
+     VALUES (?,?,?,?,?,?)`,
+  );
 
-    for (const p of raw.allowed_principals ?? []) {
-      db.prepare(
-        `INSERT OR IGNORE INTO allowed_principals (type, id, guild_id) VALUES (?,?,?)`,
-      ).run(p.type, p.id, p.guild_id);
-    }
+  let changeCount = 0;
+  const bump = (info) => {
+    changeCount += info.changes;
+  };
 
-    for (const p of raw.setup_principals ?? []) {
-      db.prepare(
-        `INSERT OR IGNORE INTO setup_principals (type, id, guild_id) VALUES (?,?,?)`,
-      ).run(p.type, p.id, p.guild_id);
-    }
+  try {
+    const txn = db.transaction(() => {
+      for (const r of /** @type {unknown[]} */ (data.pending_auths ?? [])) {
+        if (!r || typeof r !== "object") continue;
+        const row = /** @type {Record<string, unknown>} */ (r);
+        const th = String(row.token_hash || (row.token ? hashToken(String(row.token)) : ""));
+        if (!th || !row.user_id || !row.channel_id || row.expires_at == null) continue;
+        const uid = String(row.user_id);
+        bump(
+          insPending.run(
+            th,
+            String(row.socket_id ?? ""),
+            uid,
+            String(row.channel_id),
+            String(row.code_hash || (row.code ? hashAuthCode(String(row.code), uid) : "")),
+            Number(row.expires_at),
+            Number(row.max_comments ?? 30),
+          ),
+        );
+      }
 
-    for (const e of raw.deny_channels ?? []) {
-      db.prepare(
-        `INSERT OR IGNORE INTO deny_channels (guild_id, channel_id, added_by, added_at) VALUES (?,?,?,?)`,
-      ).run(e.guild_id, e.channel_id, e.added_by, e.added_at);
-    }
+      for (const r of /** @type {unknown[]} */ (data.active_sessions ?? [])) {
+        if (!r || typeof r !== "object") continue;
+        const row = /** @type {Record<string, unknown>} */ (r);
+        const th = String(row.token_hash || (row.token ? hashToken(String(row.token)) : ""));
+        if (!th || !row.aes_key || !row.user_id || !row.channel_id) continue;
+        bump(
+          insActive.run(
+            th,
+            String(row.socket_id ?? ""),
+            String(row.user_id),
+            String(row.channel_id),
+            String(row.aes_key),
+            Number(row.created_at ?? Date.now()),
+            Number(row.max_comments ?? 30),
+            row.resume_token_hash != null && row.resume_token_hash !== ""
+              ? String(row.resume_token_hash)
+              : null,
+          ),
+        );
+      }
 
-    for (const s of raw.guild_settings ?? []) {
-      const gid = s.guild_id;
-      const keyHex = deriveGuildSettingsKeyHex(gid);
-      const payload = JSON.stringify({
-        blacklist_status_enabled: !!s.blacklist_status_enabled,
-        blacklist_appeal_url:     String(s.blacklist_appeal_url ?? ""),
-      });
-      const ct = encrypt(payload, keyHex);
-      db.prepare(
-        `INSERT OR IGNORE INTO guild_settings (guild_id, settings_ciphertext) VALUES (?,?)`,
-      ).run(gid, ct);
-    }
+      for (const p of /** @type {unknown[]} */ (data.allowed_principals ?? [])) {
+        if (!p || typeof p !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (p);
+        if (!x.type || !x.id || !x.guild_id) continue;
+        bump(insAllowed.run(String(x.type), String(x.id), String(x.guild_id)));
+      }
 
-    for (const e of raw.global_blacklist ?? []) {
-      db.prepare(
-        `INSERT OR IGNORE INTO global_blacklist
-         (user_id, added_by, added_at, reason, expires_at, added_in_guild_id)
-         VALUES (?,?,?,?,?,?)`,
-      ).run(
-        e.user_id,
-        e.added_by,
-        e.added_at,
-        e.reason ?? "",
-        e.expires_at ?? null,
-        e.added_in_guild_id ?? "",
-      );
-    }
+      for (const p of /** @type {unknown[]} */ (data.setup_principals ?? [])) {
+        if (!p || typeof p !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (p);
+        if (!x.type || !x.id || !x.guild_id) continue;
+        bump(insSetup.run(String(x.type), String(x.id), String(x.guild_id)));
+      }
 
-    for (const e of raw.local_blacklist ?? []) {
-      db.prepare(
-        `INSERT OR IGNORE INTO local_blacklist
-         (user_id, guild_id, added_by, added_at, reason, expires_at)
-         VALUES (?,?,?,?,?,?)`,
-      ).run(
-        e.user_id,
-        e.guild_id,
-        e.added_by,
-        e.added_at,
-        e.reason ?? "",
-        e.expires_at ?? null,
-      );
-    }
-  });
+      for (const e of /** @type {unknown[]} */ (data.deny_channels ?? [])) {
+        if (!e || typeof e !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (e);
+        if (!x.guild_id || !x.channel_id) continue;
+        bump(
+          insDeny.run(
+            String(x.guild_id),
+            String(x.channel_id),
+            String(x.added_by ?? ""),
+            Number(x.added_at ?? Date.now()),
+          ),
+        );
+      }
 
-  txn();
-  console.log("[database] db.json から SQLite への移行を完了しました");
+      for (const s of /** @type {unknown[]} */ (data.guild_settings ?? [])) {
+        if (!s || typeof s !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (s);
+        if (!x.guild_id) continue;
+        const gid = String(x.guild_id);
+        const keyHex = deriveGuildSettingsKeyHex(gid);
+        const payload = JSON.stringify({
+          blacklist_status_enabled: !!x.blacklist_status_enabled,
+          blacklist_appeal_url:     String(x.blacklist_appeal_url ?? ""),
+        });
+        const ct = encrypt(payload, keyHex);
+        bump(insGuild.run(gid, ct));
+      }
+
+      for (const e of /** @type {unknown[]} */ (data.global_blacklist ?? [])) {
+        if (!e || typeof e !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (e);
+        if (!x.user_id) continue;
+        bump(
+          insGbl.run(
+            String(x.user_id),
+            String(x.added_by ?? ""),
+            Number(x.added_at ?? Date.now()),
+            String(x.reason ?? ""),
+            x.expires_at == null ? null : Number(x.expires_at),
+            String(x.added_in_guild_id ?? ""),
+          ),
+        );
+      }
+
+      for (const e of /** @type {unknown[]} */ (data.local_blacklist ?? [])) {
+        if (!e || typeof e !== "object") continue;
+        const x = /** @type {Record<string, unknown>} */ (e);
+        if (!x.user_id || !x.guild_id) continue;
+        bump(
+          insLoc.run(
+            String(x.user_id),
+            String(x.guild_id),
+            String(x.added_by ?? ""),
+            Number(x.added_at ?? Date.now()),
+            String(x.reason ?? ""),
+            x.expires_at == null ? null : Number(x.expires_at),
+          ),
+        );
+      }
+
+      setMeta("legacy_json_mtime", mtimeKey);
+    });
+
+    txn();
+  } catch (err) {
+    console.error(
+      "[database] db.json → SQLite マージ中にエラーが発生しました（ロールバック済み）:",
+      err instanceof Error ? err.message : err,
+    );
+    return;
+  }
+
+  console.log(
+    `[database] db.json を SQLite にマージしました（新規挿入 ${changeCount} 行相当・mtime=${mtimeKey}）`,
+  );
 }
 
 // ─────────────────────────────────────────────

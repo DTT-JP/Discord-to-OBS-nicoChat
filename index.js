@@ -21,6 +21,7 @@ import {
   closeDatabase,
 } from "./database.js";
 import { safeForLog } from "./utils/logSafe.js";
+import { assertCorsEnvForStartup } from "./utils/corsPolicy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -36,6 +37,8 @@ for (const key of REQUIRED_ENV) {
     process.exit(1);
   }
 }
+
+assertCorsEnvForStartup();
 
 const PORT = Number(process.env.PORT);
 

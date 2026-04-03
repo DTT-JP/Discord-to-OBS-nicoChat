@@ -13,13 +13,14 @@ export async function execute(interaction) {
     .addFields(
       // ── セットアップ ──────────────────────────
       {
-        name:  "🔧 `/setup` （サーバーオーナー・管理者専用）",
+        name:  "🔧 `/config` （サーバーオーナー・管理者専用）",
         value: [
-          "`/setup allow_role @ロール` — /start を許可するロールを追加",
-          "`/setup remove_role @ロール` — /start の許可ロールを削除",
-          "`/setup allow_user @ユーザー` — /start を許可するユーザーを追加",
-          "`/setup remove_user @ユーザー` — /start の許可ユーザーを削除",
-          "`/setup list` — 現在の許可リストを表示",
+          "`/config allow_role @ロール` — /start を許可するロールを追加",
+          "`/config remove_role @ロール` — /start の許可ロールを削除",
+          "`/config allow_user @ユーザー` — /start を許可するユーザーを追加",
+          "`/config remove_user @ユーザー` — /start の許可ユーザーを削除",
+          "`/config list` — 現在の許可リストを表示",
+          "（`/setup` は拒否チャンネル・BL 照会設定などサーバー別オプション用）",
         ].join("\n"),
         inline: false,
       },
@@ -41,7 +42,7 @@ export async function execute(interaction) {
       },
       {
         name:  "📊 `/status`",
-        value: "CPU・メモリ使用率、稼働時間、バージョン、自分のアクティブセッション状況を表示します。",
+        value: "CPU・メモリ使用率、稼働時間、バージョン、自分のアクティブセッション状況を表示します（グローバル BL 対象外なら誰でも実行可）。",
         inline: false,
       },
       // ── メタデータ書式 ──────────────────────────
