@@ -194,9 +194,9 @@ export async function execute(interaction) {
       components: [row],
     });
   } catch {
-    // DM が閉じられている場合は、エフェメラルでURLを返す（token はこの操作をしたユーザーだけに見える）
+    // DM が閉じられている場合は、URLを表示せず設定見直しを案内する
     return interaction.editReply({
-      content: `DMできませんでした。以下のURLを使ってください。\n\`\`\`\n${overlayUrl}\n\`\`\``,
+      content: "DM送信できませんでした　設定を見直してください",
     });
   }
 

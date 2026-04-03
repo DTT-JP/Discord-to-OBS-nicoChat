@@ -52,7 +52,7 @@ export async function execute(interaction) {
 
   if (limit == null && secretAllowed == null) {
     return interaction.editReply({
-      content: "❌ `limit` または `secret` のどちらかを指定してください。",
+      content: "❌ 変更項目が指定されていません。\n`limit` または `secret` のどちらかを指定してください。",
     });
   }
 
@@ -61,7 +61,7 @@ export async function execute(interaction) {
     .filter((s) => s.user_id === interaction.user.id);
   if (ownSessions.length === 0) {
     return interaction.editReply({
-      content: "❌ このチャンネルにあなたが作成したセッションがありません。",
+      content: "❌ このチャンネルに、あなたが作成したセッションが見つかりません。",
     });
   }
 
@@ -81,6 +81,6 @@ export async function execute(interaction) {
   if (limit != null) changed.push(`limit=${limit}`);
   if (secretAllowed != null) changed.push(`secret=${secretAllowed ? "許可" : "拒否"}`);
   return interaction.editReply({
-    content: `✅ セッション設定を更新しました（${changed.join(" / ")}）。`,
+    content: `✅ セッション設定を更新しました。\n${changed.map((v) => `- ${v}`).join("\n")}`,
   });
 }

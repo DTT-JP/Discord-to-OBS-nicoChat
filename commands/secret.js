@@ -10,11 +10,11 @@ export function setApplySecretFn(fn) {
 
 export const data = new SlashCommandBuilder()
   .setName("secret")
-  .setDescription(".")
+  .setDescription("セッションエフェクトを切り替えます")
   .addStringOption((opt) =>
     opt
       .setName("effect")
-      .setDescription(".")
+      .setDescription("エフェクト名")
       .setRequired(true)
   )
   .addBooleanOption((opt) =>
@@ -42,7 +42,7 @@ export async function execute(interaction) {
 
   if (sessions.length === 0) {
     return interaction.editReply({
-      content: "セッションがありません",
+      content: "❌ このチャンネルにはアクティブなセッションがありません。",
     });
   }
 
@@ -50,7 +50,7 @@ export async function execute(interaction) {
   const targetSessions = sessions.filter((s) => s.user_id === interaction.user.id || !!s.secret_allowed);
   if (targetSessions.length === 0) {
     return interaction.editReply({
-      content: "このコマンドは使用できません",
+      content: "❌ このチャンネルではこのコマンドを使用できません。",
     });
   }
   if (shouldApply && targetSessions.length > 0 && applySecretFn) {
@@ -61,7 +61,7 @@ export async function execute(interaction) {
 
   return interaction.editReply({
     content: value
-      ? "そのエフェクトを適応しました"
-      : "そのエフェクトを削除しました",
+      ? "✅ エフェクト設定を適用しました。"
+      : "✅ エフェクト設定を解除しました。",
   });
 }
