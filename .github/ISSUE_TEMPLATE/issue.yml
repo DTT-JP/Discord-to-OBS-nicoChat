@@ -1,23 +1,13 @@
-name: バグ報告・機能要望 (Bug / Feature)
-description: BOTの不具合報告や、新しい機能の提案を行います。
-title: "[Request/Bug]: "
-labels: ["enhancement"]
+name: その他のお問合せ
+description: 上記カテゴリに当てはまらない内容はこちらからご連絡ください。
+title: "[Inquiry]: "
+labels: ["question"]
 body:
-  - type: dropdown
-    id: type
-    attributes:
-      label: 投稿の種類
-      options:
-        - バグ報告 (Bug Report)
-        - 機能要望 (Feature Request)
-        - その他 (Other)
-    validations:
-      required: true
   - type: textarea
     id: content
     attributes:
       label: 内容の詳細
-      description: バグの場合は発生手順、要望の場合は導入のメリットなどを記載してください。
+      description: お問い合わせ内容を具体的に記載してください。
     validations:
       required: true
   - type: textarea

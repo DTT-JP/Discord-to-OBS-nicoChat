@@ -1,6 +1,6 @@
-name: ユーザーBL 異議申し立て (Appeal)
-description: グローバル / サーバー別ユーザーブラックリスト登録に対する解除申請を行います。
-title: "[User Appeal]: "
+name: グローバルブラックリストの異議申し立て
+description: グローバルユーザーブラックリスト登録に対する異議申し立てを行います。
+title: "[Global BL Appeal]: "
 labels: ["appeal", "user-blacklist"]
 body:
   - type: markdown
@@ -37,4 +37,3 @@ body:
       description: スクリーンショット（画像を貼り付け可）や当時の状況説明など。
     validations:
       required: false
-

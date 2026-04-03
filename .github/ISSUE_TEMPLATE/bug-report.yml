@@ -1,0 +1,31 @@
+name: バグ報告
+description: BOTの不具合や想定外の動作を報告します。
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: どの操作で問題が発生したか、順番に記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した動作
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+    validations:
+      required: true
+  - type: textarea
+    id: supplemental
+    attributes:
+      label: 補足情報
+      description: エラーログ、スクリーンショット、発生環境など。
+    validations:
+      required: false

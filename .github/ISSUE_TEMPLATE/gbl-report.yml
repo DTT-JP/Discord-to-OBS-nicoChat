@@ -1,7 +1,7 @@
-name: GBL推薦 (Global Blacklist Report)
-description: グローバルブラックリストへの登録を推薦・報告します。
-title: "[GBL-Report]: "
-labels: ["gbl-report"]
+name: グローバルブラックリストの推薦や通報
+description: グローバルブラックリストへの登録推薦・通報用テンプレートです。
+title: "[Global BL Report]: "
+labels: ["gbl-report", "user-blacklist"]
 body:
   - type: input
     id: target_username

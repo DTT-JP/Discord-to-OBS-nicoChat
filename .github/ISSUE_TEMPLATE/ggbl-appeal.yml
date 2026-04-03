@@ -1,14 +1,14 @@
-name: ギルドBL お問い合わせ (Guild BL)
-description: サーバー (ギルド) がグローバルギルドブラックリストに登録されている場合のお問い合わせ用テンプレートです。
-title: "[Guild Global BL]: "
-labels: ["guild-blacklist", "question"]
+name: グローバルギルドブラックリストの異議申し立て
+description: サーバー（ギルド）がグローバルギルドブラックリストに登録されている場合の異議申し立て用テンプレートです。
+title: "[Guild Appeal]: "
+labels: ["appeal", "guild-blacklist"]
 body:
   - type: markdown
     attributes:
       value: |
         ### ⚠️ 注意事項
-        - このフォームは **グローバルギルドブラックリスト（サーバー単位）** に関するお問い合わせ専用です。
-        - ユーザー個別のブラックリスト解除は「ユーザーBL 異議申し立て (Appeal)」テンプレートを使用してください。
+        - このフォームは **グローバルギルドブラックリスト（サーバー単位）** の異議申し立て専用です。
+        - ユーザー個別のブラックリスト解除は「グローバルブラックリストの異議申し立て」テンプレートを使用してください。
         - 事実と異なる情報や、不十分な情報しかない場合、対応ができない・遅れることがあります。
 
   - type: input
@@ -48,8 +48,8 @@ body:
   - type: textarea
     id: reason_inquiry
     attributes:
-      label: お問い合わせの趣旨
-      description: なぜこのサーバーで Bot 利用を希望しているか、また現在把握している BAN 理由や経緯があればできるだけ詳しく記載してください。
+      label: 異議申し立ての趣旨
+      description: なぜ解除されるべきだと考えるか、現在把握している BAN 理由や経緯をできるだけ詳しく記載してください。
     validations:
       required: true
 
@@ -60,4 +60,3 @@ body:
       description: 必要に応じて、関連スクリーンショットや外部ページのリンク、運営ポリシー等があれば記載してください（画像の貼り付けも可）。
     validations:
       required: false
-
