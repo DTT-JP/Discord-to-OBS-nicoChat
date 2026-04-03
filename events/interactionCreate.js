@@ -1,8 +1,9 @@
 import { Events, MessageFlags } from "discord.js";
-import { GlobalBlacklistDB } from "../database.js";
+import { GlobalBlacklistDB, GlobalGuildBlacklistDB } from "../database.js";
 import { safeForLog } from "../utils/logSafe.js";
 import { parsePageCustomId, handleListPageButton } from "../utils/paginatedList.js";
 import { isHelpComponentInteraction, handleHelpComponent } from "../commands/help.js";
+import { formatDateTime } from "../utils/moderation.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -12,6 +13,29 @@ export const once  = false;
  * @param {import("discord.js").Client & { commands: Map<string, any> }} client
  */
 export async function execute(interaction, client) {
+  // ── グローバルギルドブラックリストチェック ─────────
+  // ブラックリスト対象ギルドでは、Bot管理者以外の利用を遮断する
+  const botOwnerId = process.env.BOT_OWNER_ID?.trim();
+  const isBotOwnerUser = !!botOwnerId && interaction.user?.id === botOwnerId;
+  const guildId = interaction.guildId;
+  if (guildId && !isBotOwnerUser) {
+    const entry = await GlobalGuildBlacklistDB.find(guildId);
+    if (entry) {
+      const appealUrl = process.env.GLOBAL_GUILD_BLACKLIST_APPEAL_URL?.trim();
+      const appealLine = appealUrl ? `異議申し立てはこちら: ${appealUrl}` : "異議申し立てはこちら: (URL未設定)";
+      const reasonPublic = entry.public_reason?.trim() ? entry.public_reason.trim() : "（理由なし）";
+      return interaction.reply({
+        content: [
+          "❌ このサーバーではこのBOTは使えません。",
+          `理由（公開向け）: ${reasonPublic}`,
+          `期限: 解除される日時（${formatDateTime(entry.expires_at)}）`,
+          appealLine,
+        ].join("\n"),
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+  }
+
   if (interaction.isButton()) {
     const parsed = parsePageCustomId(interaction.customId);
     if (parsed) {

@@ -12,6 +12,7 @@ import {
   AllowedPrincipalDB,
   LocalBlacklistDB,
   GlobalBlacklistDB,
+  GlobalGuildBlacklistDB,
 } from "../database.js";
 import { isAdminOrOwner, formatDateTime, formatRemaining, truncateReason } from "./moderation.js";
 
@@ -28,6 +29,7 @@ export const ListScope = {
   SETUP_START_USER: "su_ru",
   BLACKLIST_ENTRIES: "bl_li",
   GLOBAL_BL: "gbl",
+  GLOBAL_GUILD_BL: "ggbl",
 };
 
 const TITLES = {
@@ -40,6 +42,7 @@ const TITLES = {
   [ListScope.SETUP_START_USER]: "🎬 /setup — /start 許可ユーザー",
   [ListScope.BLACKLIST_ENTRIES]: "🚫 /blacklist — サーバー登録一覧",
   [ListScope.GLOBAL_BL]: "🚫 /global_blacklist — 一覧",
+  [ListScope.GLOBAL_GUILD_BL]: "🚫 /global_guild_blacklist — 一覧",
 };
 
 const COLORS = {
@@ -52,6 +55,7 @@ const COLORS = {
   [ListScope.SETUP_START_USER]: 0x57f287,
   [ListScope.BLACKLIST_ENTRIES]: 0xed4245,
   [ListScope.GLOBAL_BL]: 0xed4245,
+  [ListScope.GLOBAL_GUILD_BL]: 0xed4245,
 };
 
 const FOOTER_RE = /ページ (\d+)\/(\d+)/;
@@ -129,6 +133,13 @@ export function getLinesForScope(scope, listKey) {
         (e) =>
           `<@${e.user_id}> / ID: \`${e.user_id}\` / 残り: ${formatRemaining(e.expires_at)} / 理由: ${truncateReason(e.reason)}`,
       );
+    case ListScope.GLOBAL_GUILD_BL:
+      return GlobalGuildBlacklistDB.findAll().map((e) => {
+        const untilText = formatDateTime(e.expires_at);
+        const pubReason = truncateReason(e.public_reason);
+        const internal = truncateReason(e.internal_reason);
+        return `ギルドID: \`${e.guild_id}\` / 残り: ${formatRemaining(e.expires_at)} / 公開理由: ${pubReason} / 内部理由: ${internal} / 解除日時: ${untilText}`;
+      });
     default:
       return [];
   }
@@ -176,6 +187,10 @@ function canUseListScope(interaction, scope) {
       if (admin) return true;
       return BlacklistCtrlPrincipalDB.isAllowed(interaction.member);
     case ListScope.GLOBAL_BL: {
+      const ownerId = process.env.BOT_OWNER_ID?.trim();
+      return !!(ownerId && interaction.user.id === ownerId);
+    }
+    case ListScope.GLOBAL_GUILD_BL: {
       const ownerId = process.env.BOT_OWNER_ID?.trim();
       return !!(ownerId && interaction.user.id === ownerId);
     }

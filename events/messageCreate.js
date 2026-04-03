@@ -1,5 +1,5 @@
 import { Events } from "discord.js";
-import { ActiveSessionDB, GlobalBlacklistDB, LocalBlacklistDB } from "../database.js";
+import { ActiveSessionDB, GlobalBlacklistDB, LocalBlacklistDB, GlobalGuildBlacklistDB } from "../database.js";
 import { parseMessage } from "../discord/parser.js";
 
 export const name  = Events.MessageCreate;
@@ -27,9 +27,13 @@ export async function execute(message) {
   // 全サーバー共通でOBSへの表示を遮断する
   if (GlobalBlacklistDB.has(message.author.id)) return;
 
+  // ── グローバルギルドブラックリストチェック ──────
+  // ブラックリスト対象ギルドではOBSへの表示を遮断する
+  const guildId = message.guildId;
+  if (guildId && GlobalGuildBlacklistDB.hasGuild(guildId)) return;
+
   // ── ローカルブラックリストチェック ────────────
   // そのサーバー内でブロックされているユーザーはOBSに流さない
-  const guildId = message.guildId;
   if (guildId && LocalBlacklistDB.has(message.author.id, guildId)) return;
 
   // 現在アクティブなセッションの監視チャンネルID一覧を取得

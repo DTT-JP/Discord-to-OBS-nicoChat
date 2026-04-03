@@ -235,6 +235,7 @@ npm run dev
 | コマンド | 説明 |
 |---|---|
 | `/global_blacklist` | グローバル BL。`list` も **ページ付き**。`add` の期限指定は `/blacklist add` と同様の `duration_value` / `duration_unit` |
+| `/global_guild_blacklist` | グローバルギルド BL。`list` も **ページ付き**。`add` で公開向け理由＋内部理由を登録し、期限は `duration_value` / `duration_unit` で指定 |
 
 ---
 

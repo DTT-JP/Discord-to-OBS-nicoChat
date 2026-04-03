@@ -30,6 +30,7 @@
 |---|---|
 | `BOT_OWNER_ID` | `/global_blacklist` 等の製作者専用コマンドに使用 |
 | `GLOBAL_BLACKLIST_APPEAL_URL` | `/my-status` での表示用 |
+| `GLOBAL_GUILD_BLACKLIST_APPEAL_URL` | `/global_guild_blacklist` の DM表示用 |
 | `MAX_COMMENTS` | デフォルト同時表示上限 |
 | `CODE_EXPIRE_MINUTES` | 認証待ちトークンの有効期限 |
 | `AUTH_CODE_PEPPER` | 未設定時は起動ごとにランダム（`utils/crypto.js`）。本番では固定値推奨 |

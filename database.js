@@ -109,6 +109,15 @@ function initSchema() {
       added_in_guild_id  TEXT NOT NULL DEFAULT ''
     );
 
+    CREATE TABLE IF NOT EXISTS global_guild_blacklist (
+      guild_id         TEXT PRIMARY KEY,
+      added_by         TEXT NOT NULL,
+      added_at         INTEGER NOT NULL,
+      public_reason    TEXT NOT NULL DEFAULT '',
+      internal_reason  TEXT NOT NULL DEFAULT '',
+      expires_at       INTEGER
+    );
+
     CREATE TABLE IF NOT EXISTS local_blacklist (
       user_id    TEXT NOT NULL,
       guild_id   TEXT NOT NULL,
@@ -789,6 +798,65 @@ export const GlobalBlacklistDB = {
     return db.prepare(
       "SELECT * FROM global_blacklist WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?)",
     ).get(userId, now);
+  },
+};
+
+export const GlobalGuildBlacklistDB = {
+  add(guildId, addedBy, publicReason = "", internalReason = "", expiresAt = null) {
+    // "上書きしない"ため、既に有効期限内の登録がある場合は無視する
+    // （期限切れなら新規登録として扱う）
+    let inserted = false;
+    const txn = db.transaction(() => {
+      const now = Date.now();
+      const existing = db.prepare(
+        "SELECT expires_at FROM global_guild_blacklist WHERE guild_id = ?",
+      ).get(guildId);
+
+      const isStillActive = existing
+        ? existing.expires_at == null || existing.expires_at > now
+        : false;
+
+      if (existing && isStillActive) return;
+
+      if (existing && !isStillActive) {
+        db.prepare("DELETE FROM global_guild_blacklist WHERE guild_id = ?").run(guildId);
+      }
+
+      db.prepare(
+        `INSERT INTO global_guild_blacklist
+         (guild_id, added_by, added_at, public_reason, internal_reason, expires_at)
+         VALUES (?,?,?,?,?,?)`,
+      ).run(guildId, addedBy, Date.now(), publicReason, internalReason, expiresAt);
+
+      inserted = true;
+    });
+
+    txn();
+    return Promise.resolve(inserted);
+  },
+  remove(guildId) {
+    const info = db.prepare("DELETE FROM global_guild_blacklist WHERE guild_id = ?").run(guildId);
+    return Promise.resolve(info.changes > 0);
+  },
+  hasGuild(guildId) {
+    const now = Date.now();
+    const row = db.prepare(
+      "SELECT expires_at FROM global_guild_blacklist WHERE guild_id = ?",
+    ).get(guildId);
+    if (!row) return false;
+    return row.expires_at == null || row.expires_at > now;
+  },
+  find(guildId) {
+    const now = Date.now();
+    return db.prepare(
+      "SELECT * FROM global_guild_blacklist WHERE guild_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+    ).get(guildId) ?? undefined;
+  },
+  findAll() {
+    const now = Date.now();
+    return db.prepare(
+      "SELECT * FROM global_guild_blacklist WHERE expires_at IS NULL OR expires_at > ?",
+    ).all(now);
   },
 };
 

@@ -1,4 +1,4 @@
-name: GBL推薦 (Global Blacklist Recommendation)
+name: GBL推薦 (Global Blacklist Report)
 description: グローバルブラックリストへの登録を推薦・報告します。
 title: "[GBL-Report]: "
 labels: ["gbl-report"]
@@ -29,3 +29,4 @@ body:
       description: スクリーンショットの貼り付けや、メッセージリンク、ログなど。
     validations:
       required: true
+

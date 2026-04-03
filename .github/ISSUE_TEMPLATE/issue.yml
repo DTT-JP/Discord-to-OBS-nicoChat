@@ -1,4 +1,4 @@
-name: バグ報告・機能要望 (Bug Report / Feature Request)
+name: バグ報告・機能要望 (Bug / Feature)
 description: BOTの不具合報告や、新しい機能の提案を行います。
 title: "[Request/Bug]: "
 labels: ["enhancement"]
@@ -25,3 +25,6 @@ body:
     attributes:
       label: 補足情報
       description: エラーログや参考資料などがあれば。
+    validations:
+      required: false
+
