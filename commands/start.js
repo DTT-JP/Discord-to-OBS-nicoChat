@@ -142,14 +142,28 @@ export async function execute(interaction) {
 
   const overlayUrl = buildOverlayUrl(token);
 
+  const overlayUrlBlock = overlayUrl.length > 900
+    ? `\`${overlayUrl}\``
+    : `\`\`\`\n${overlayUrl}\n\`\`\``;
+
   const embed = new EmbedBuilder()
-    .setTitle("✅ OBS オーバーレイ URL を発行しました")
+    .setTitle("OBSオーバーレイセッション開始")
     .setColor(0x57f287)
-    .setDescription("下のURLをOBSのブラウザソースに貼り付けてください。")
+    .setDescription("以下のURLをOBSのブラウザソースに貼り付けてください。")
     .addFields(
+      { name: "OBSブラウザソースURL", value: overlayUrlBlock, inline: false },
       { name: "監視チャンネル", value: `<#${channel.id}>`, inline: true },
       { name: "同時表示上限", value: `${maxComments} 件`, inline: true },
-      { name: "認証コードの有効期限", value: `${Math.round(codeExpireMs / 60_000)} 分`, inline: true },
+      { name: "有効期限", value: `${Math.round(codeExpireMs / 60_000)} 分`, inline: true },
+      {
+        name: "手順",
+        value: [
+          "1. 上のURLをOBSのブラウザソースで開く",
+          "2. 画面に表示された6桁のコードを確認する",
+          `3. このサーバーで \`/auth\`（コード入力）を実行して認証する`,
+        ].join("\n"),
+        inline: false,
+      },
     )
     .setTimestamp();
 
@@ -164,8 +178,6 @@ export async function execute(interaction) {
     await interaction.user.send({
       embeds: [embed],
       components: [row],
-      // Discord はコードブロックに `copy` が付くため、ユーザーが安全にコピーできる
-      content: `OBS用URL（1行・コピー用）\n\`\`\`\n${overlayUrl}\n\`\`\``,
     });
   } catch {
     // DM が閉じられている場合は、エフェメラルでURLを返す（token はこの操作をしたユーザーだけに見える）

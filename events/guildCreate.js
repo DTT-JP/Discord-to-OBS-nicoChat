@@ -16,7 +16,7 @@ function buildDmEmbed(guildName, entry) {
       { name: "期限", value: expiresText, inline: false },
       {
         name: "異議申し立て",
-        value: appealLine === "未設定" ? "未設定" : `[\u7570\u8b70\u7533\u8a33](${appealLine})`,
+        value: appealLine === "未設定" ? "未設定" : `<${appealLine}>`,
         inline: false,
       },
     )
