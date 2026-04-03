@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import helmet from "helmet";
 import { Server } from "socket.io";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -14,6 +15,27 @@ const PUBLIC_DIR = join(__dirname, "../public");
 export function createSocketServer() {
   const app        = express();
   const httpServer = createServer(app);
+
+  // ── セキュリティヘッダ（helmet: nosniff・X-Frame-Options 等） ──
+  // OBS オーバーレイは同一オリジンの script / インライン style / Discord CDN 画像を許可
+  app.use(
+    helmet({
+      strictTransportSecurity: false,
+      referrerPolicy:          { policy: "no-referrer" },
+      frameguard:              { action: "deny" },
+      crossOriginEmbedderPolicy: false,
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc:  ["'self'"],
+          styleSrc:   ["'self'", "'unsafe-inline'"],
+          imgSrc:     ["'self'", "data:", "https:"],
+          connectSrc: ["'self'", "ws:", "wss:"],
+          baseUri:    ["'self'"],
+        },
+      },
+    }),
+  );
 
   // ── CORS設定 ──────────────────────────────────
   // ALLOWED_ORIGINS に許可するオリジンをカンマ区切りで設定する（例: https://example.com,https://obs.example.com）

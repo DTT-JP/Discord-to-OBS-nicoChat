@@ -60,8 +60,8 @@
   // Socket.io
   // ────────────────────────────────────────────────
 
-  const token  = new URLSearchParams(location.search).get("token");
-  const socket = io({ query: { token } });
+  const tokenFromUrl = new URLSearchParams(location.search).get("token");
+  const socket       = io({ query: { token: tokenFromUrl } });
 
   // ────────────────────────────────────────────────
   // WebCrypto
@@ -125,7 +125,7 @@
 
   socket.on("auth_code", ({ code }) => {
     authCodeDisplay.textContent = String(code);
-    console.log("[overlay] 認証コード:", code);
+    console.log("[overlay] 認証コードを表示しました（ログには値を出しません）");
   });
 
   socket.on("auth_success", async ({ key, maxComments }) => {
@@ -145,6 +145,14 @@
       authCodeDisplay.style.display = "none";
 
       authScreen.style.display = "none";
+
+      // 認証完了後は URL からトークンクエリを取り除く（履歴・共有時の露出軽減）
+      try {
+        const path = location.pathname || "/";
+        const next = `${path}${location.hash || ""}`;
+        if (location.search) history.replaceState(null, "", next);
+      } catch (_) { /* ignore */ }
+
       console.log("[overlay] 認証完了 maxComments=", maxComments);
     } catch (e) {
       console.error("[overlay] 鍵エラー:", e);

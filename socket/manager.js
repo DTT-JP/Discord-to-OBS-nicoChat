@@ -1,5 +1,6 @@
 import { PendingAuthDB, ActiveSessionDB } from "../database.js";
 import { generateAuthCode, encrypt } from "../utils/crypto.js";
+import { maskSecrets } from "../utils/logSafe.js";
 import { setDistributeKeyFn } from "../commands/auth.js";
 import { setUpdateLimitFn }   from "../commands/setlimit.js";
 import { setApplySecretFn }   from "../commands/secret.js";
@@ -44,7 +45,8 @@ export function initSocketManager(io) {
         const encrypted = encrypt(JSON.stringify(payload), session.aes_key);
         io.to(session.socket_id).emit("message", encrypted);
       } catch (err) {
-        console.error(`[manager] 暗号化エラー: socketId=${session.socket_id}`, err);
+        const safe = err instanceof Error ? maskSecrets(err.message) : err;
+        console.error(`[manager] 暗号化エラー: socketId=${session.socket_id}`, safe);
       }
     }
   });
@@ -83,6 +85,19 @@ export function initSocketManager(io) {
       socket.emit("error_msg", { code: "INVALID_TOKEN", message: "無効なトークンです" });
       socket.disconnect(true);
       return;
+    }
+
+    // 同一待機トークンを別クライアントが同時に使えないようにする（古い接続が生きている間は拒否）
+    if (pending.socket_id) {
+      const existing = io.sockets.sockets.get(pending.socket_id);
+      if (existing && existing.connected && pending.socket_id !== socket.id) {
+        socket.emit("error_msg", {
+          code:    "TOKEN_IN_USE",
+          message: "この URL は既に別のブラウザで接続されています。元のタブを閉じるか、/start で新しい URL を発行してください。",
+        });
+        socket.disconnect(true);
+        return;
+      }
     }
 
     if (Date.now() > pending.expires_at) {

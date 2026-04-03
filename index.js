@@ -14,6 +14,7 @@ import {
 import { createSocketServer } from "./socket/server.js";
 import { initSocketManager } from "./socket/manager.js";
 import { ActiveSessionDB, PendingAuthDB } from "./database.js";
+import { safeForLog } from "./utils/logSafe.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -226,7 +227,7 @@ async function shutdown(signal) {
     process.exit(0);
 
   } catch (err) {
-    console.error("[shutdown] クリーンアップ中にエラーが発生しました:", err);
+    console.error("[shutdown] クリーンアップ中にエラーが発生しました:", safeForLog(err));
     process.exit(1);
   }
 }
@@ -237,9 +238,9 @@ process.once("SIGTERM", () => shutdown("SIGTERM"));
 
 // 未処理の例外・Promise 拒否をログに残してプロセスを維持
 process.on("uncaughtException", (err) => {
-  console.error("[uncaughtException]", err);
+  console.error("[uncaughtException]", safeForLog(err));
 });
 
 process.on("unhandledRejection", (reason) => {
-  console.error("[unhandledRejection]", reason);
+  console.error("[unhandledRejection]", safeForLog(reason));
 });
