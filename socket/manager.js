@@ -31,6 +31,27 @@ function clampMaxComments(v) {
 }
 
 /**
+ * リバースプロキシ (nginx / Cloudflare 等) 経由の場合に実クライアント IP を取得する。
+ * X-Forwarded-For の先頭エントリを優先し、取得できない場合は socket の直接アドレスへ
+ * フォールバックする。
+ *
+ * ⚠️ 信頼できるプロキシからのみ X-Forwarded-For を受け入れる前提。
+ * 公開環境では nginx / Cloudflare 側で偽装ヘッダを除去することを推奨。
+ *
+ * @param {import("socket.io").Socket} socket
+ * @returns {string}
+ */
+function getClientIp(socket) {
+  const xff = socket.handshake.headers["x-forwarded-for"];
+  if (xff) {
+    // "client, proxy1, proxy2" 形式 → 先頭がオリジンIP
+    const first = (typeof xff === "string" ? xff : xff[0]).split(",")[0].trim();
+    if (first) return first;
+  }
+  return socket.handshake.address || "unknown";
+}
+
+/**
  * @param {import("socket.io").Server} io
  */
 export function initSocketManager(io) {
@@ -91,7 +112,8 @@ export function initSocketManager(io) {
   io.on("connection", async (socket) => {
     console.log(`[manager] 接続試行: socketId=${socket.id}`);
 
-    const ip = socket.handshake.address || "unknown";
+    // リバースプロキシを考慮したクライアントIP取得
+    const ip = getClientIp(socket);
     const now = Date.now();
     const ipAttempt = connectionAttempts.get(ip) ?? { count: 0, windowStart: now };
     if (now - ipAttempt.windowStart >= WINDOW_MS) {

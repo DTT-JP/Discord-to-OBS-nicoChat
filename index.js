@@ -227,8 +227,12 @@ activeCleanupTimer.unref();
 async function shutdown(signal) {
   console.log(`\n[shutdown] ${signal} を受信しました。クリーンアップを開始します...`);
 
-  // タイマー停止
+  // 修正: 両タイマーを先に停止する。
+  // activeCleanupTimer を止めずにいると、flushSessionsForProcessRestart() が
+  // socket_id を空にした直後に cleanupDisconnectedSessions が走り、
+  // 起動直後の正規セッションを誤って削除するリスクがあった。
   clearInterval(cleanupTimer);
+  clearInterval(activeCleanupTimer);
 
   try {
     // 1. disconnect ハンドラを抑止

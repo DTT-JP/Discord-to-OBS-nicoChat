@@ -1,9 +1,7 @@
 .env
-node_modules
+node_modules/
 db.json
-.db*
 app.db
 app.db-wal
 app.db-shm
-1
-app*
+1/

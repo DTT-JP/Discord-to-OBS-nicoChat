@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import "dotenv/config";
+import { sanitizeCommandNode } from "./utils/sanitizeCommand.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -18,36 +19,6 @@ const commandsPath = join(__dirname, "commands");
 const commandFiles = readdirSync(commandsPath).filter((f) => f.endsWith(".js"));
 
 const jsonCommands = [];
-
-/**
- * Discord API 登録前にコマンドJSONを正規化する
- * - 同名オプションを除去（先勝ち）
- * - required=true を required=false より前へ並べる
- * @param {any} node
- * @returns {any}
- */
-function sanitizeCommandNode(node) {
-  if (!node || typeof node !== "object") return node;
-
-  const out = { ...node };
-  if (!Array.isArray(out.options)) return out;
-
-  const normalizedChildren = out.options.map((child) => sanitizeCommandNode(child));
-
-  const seen = new Set();
-  const uniqueChildren = normalizedChildren.filter((child) => {
-    const key = `${child.type}:${child.name}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  out.options = [
-    ...uniqueChildren.filter((child) => child.required === true),
-    ...uniqueChildren.filter((child) => child.required !== true),
-  ];
-  return out;
-}
 
 for (const file of commandFiles) {
   const filePath = join(commandsPath, file);

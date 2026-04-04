@@ -2,7 +2,11 @@ import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB, ActiveSessionDB } from "../database.js";
 
 let applySecretFn = null;
-const EFFECTS = new Set(["gaming", "reverse"]);
+
+// OBS クライアント側で実装されているエフェクト名の正規セット。
+// このセットに含まれる名前のみ apply_secret イベントとして送信する。
+// ユーザー入力をそのまま送信しないことで意図しないエフェクト名の流入を防ぐ。
+const KNOWN_EFFECTS = new Set(["gaming", "reverse"]);
 
 export function setApplySecretFn(fn) {
   applySecretFn = fn;
@@ -34,9 +38,9 @@ export async function execute(interaction) {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const effect  = interaction.options.getString("effect", true).trim().toLowerCase();
-  const value   = interaction.options.getBoolean("value", true);
-  const channel = interaction.channelId;
+  const effectRaw = interaction.options.getString("effect", true).trim().toLowerCase();
+  const value     = interaction.options.getBoolean("value", true);
+  const channel   = interaction.channelId;
 
   const sessions = ActiveSessionDB.findByChannelId(channel);
 
@@ -52,12 +56,21 @@ export async function execute(interaction) {
       content: "❌ このチャンネルではこのコマンドを使用できません。",
     });
   }
-  const shouldApply = EFFECTS.has(effect);
-  if (shouldApply && targetSessions.length > 0 && applySecretFn) {
-    applySecretFn(targetSessions.map((s) => s.socket_id).filter(Boolean), effect, value);
-  } else if (shouldApply && targetSessions.length > 0 && !applySecretFn) {
+
+  // 既知エフェクト名のみOBSへ送信する。
+  // 未知の名前の場合でも成功扱いのまま（意図した動作）とするが、
+  // クライアントへの送信は行わない。
+  if (KNOWN_EFFECTS.has(effectRaw) && applySecretFn) {
+    applySecretFn(
+      targetSessions.map((s) => s.socket_id).filter(Boolean),
+      effectRaw,  // KNOWN_EFFECTS で検証済みの名前のみ使用
+      value,
+    );
+  } else if (KNOWN_EFFECTS.has(effectRaw) && !applySecretFn) {
     console.error("[secret] applySecretFn が未登録です");
   }
+  // KNOWN_EFFECTS に含まれない名前は applySecretFn を呼ばず、
+  // 送信なしで成功扱いのままフォールスルーする（意図した動作）
 
   return interaction.editReply({
     content: value

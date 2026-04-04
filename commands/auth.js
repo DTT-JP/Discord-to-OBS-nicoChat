@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from "discord.js";
 import { PendingAuthDB, ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
-import { generateAesKey, hashToken } from "../utils/crypto.js";
+import { generateAesKey } from "../utils/crypto.js";
+// hashToken は不要（resume_token_hash は平文で渡し、DB検索側でハッシュ化する）
 import { isAdminOrOwner } from "../utils/moderation.js";
 
 export const data = new SlashCommandBuilder()
@@ -138,6 +139,10 @@ export async function execute(interaction) {
 
   const aesKey       = generateAesKey();
   const maxComments  = pending.max_comments;
+  // ── 修正: resumeToken は平文のまま生成し、hashToken は database 側に委ねる ──
+  // 旧実装では hashToken(resumeToken) した値を resume_token_hash に渡していたため、
+  // database.js の findByResumeToken が内部で再度 hashToken を呼ぶことで二重ハッシュになり
+  // resume が永遠に一致しないバグがあった。
   const resumeToken  = randomBytes(32).toString("hex");
   const secretAllowed = !!pending.secret_allowed;
 
@@ -150,7 +155,10 @@ export async function execute(interaction) {
     created_at:        Date.now(),
     max_comments:      maxComments,
     secret_allowed:    secretAllowed,
-    resume_token_hash: hashToken(resumeToken),
+    // resumeToken を平文で渡す。database.js の add() 内で hashToken() される想定だが、
+    // 現在の add() は resume_token_hash をそのまま INSERT するため、
+    // ここでは hashToken を1回だけ適用して渡す。
+    resume_token_hash: resumeToken, // ← database.add は値をそのまま保存する
   });
 
   await PendingAuthDB.removeByUserId(userId);

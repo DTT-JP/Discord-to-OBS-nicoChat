@@ -1,6 +1,6 @@
 {
   "name": "discord-obs-overlay",
-  "version": "2.0.0-dev17-beta02",
+  "version": "2.0.0-dev17-beta03",
   "description": "Discord message overlay for OBS via Socket.io",
   "type": "module",
   "main": "index.js",

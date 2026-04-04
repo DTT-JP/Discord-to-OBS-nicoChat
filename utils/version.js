@@ -1,5 +1,10 @@
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+
 /**
- * アプリケーションバージョン
- * ここを書き換えることで /status コマンドに反映される
+ * アプリケーションバージョン。
+ * package.json の version フィールドを単一の真実源として参照する。
+ * バージョンを変更する際は package.json のみ編集すればよい。
  */
-export const VERSION = "2.0.0-dev17-beta02";
+export const VERSION = require("../package.json").version;
