@@ -1,6 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from "discord.js";
 import { PendingAuthDB, ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
 import { generateAesKey } from "../utils/crypto.js";
+// hashToken は不要（resume_token_hash は平文で渡し、DB検索側でハッシュ化する）
+import { isAdminOrOwner } from "../utils/moderation.js";
 
 export const data = new SlashCommandBuilder()
   .setName("auth")
@@ -14,11 +17,11 @@ export const data = new SlashCommandBuilder()
       .setMaxLength(6),
   );
 
-/** @type {((socketId: string, aesKey: string, maxComments: number) => void) | null} */
+/** @type {((socketId: string, aesKey: string, maxComments: number, resumeToken: string) => void) | null} */
 let distributeKeyFn = null;
 
 /**
- * @param {(socketId: string, aesKey: string, maxComments: number) => void} fn
+ * @param {(socketId: string, aesKey: string, maxComments: number, resumeToken: string) => void} fn
  */
 export function setDistributeKeyFn(fn) {
   distributeKeyFn = fn;
@@ -29,21 +32,43 @@ export function setDistributeKeyFn(fn) {
 const authAttempts = new Map();
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS   = 5 * 60 * 1000; // 5分
+const AUTH_ATTEMPT_SWEEP_MS = 10 * 60 * 1000; // 10分ごと
+const AUTH_ATTEMPT_MAX_IDLE_MS = LOCKOUT_MS * 2;
+
+const authAttemptSweeper = setInterval(() => {
+  const now = Date.now();
+  for (const [uid, rec] of authAttempts) {
+    if (!rec || now - rec.lastAttempt > AUTH_ATTEMPT_MAX_IDLE_MS) {
+      authAttempts.delete(uid);
+    }
+  }
+}, AUTH_ATTEMPT_SWEEP_MS);
+authAttemptSweeper.unref();
 
 export async function execute(interaction) {
-  // ── setup で許可されたロール/ユーザーのみ実行可能 ──
-  const member = interaction.member;
-  if (!AllowedPrincipalDB.isAllowed(member)) {
+  if (!interaction.guild) {
     return interaction.reply({
-      content: "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/setup allow_role` または `/setup allow_user` での許可を依頼してください。",
+      content:
+        "❌ `/auth` は **`/start` を実行したサーバーのテキストチャンネル** で実行してください（DM では認証できません）。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const member = interaction.member;
+  if (!member || (!isAdminOrOwner(interaction) && !AllowedPrincipalDB.isAllowed(member))) {
+    return interaction.reply({
+      content:
+        "❌ このコマンドを実行する権限がありません。\n管理者に `/setup allow_start_role` または `/setup allow_start_user` での許可を依頼してください。",
       flags: MessageFlags.Ephemeral,
     });
   }
 
   // ── ブルートフォース保護 ──────────────────────
   const userId = interaction.user.id;
+  const guildId = interaction.guild.id;
+  const lockoutKey = `${guildId}:${userId}`;
   const now    = Date.now();
-  const record = authAttempts.get(userId) ?? { count: 0, lastAttempt: 0 };
+  const record = authAttempts.get(lockoutKey) ?? { count: 0, lastAttempt: 0 };
 
   // ロックアウト期間が過ぎていたらリセット
   if (now - record.lastAttempt >= LOCKOUT_MS) {
@@ -63,11 +88,16 @@ export async function execute(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const code = interaction.options.getString("code", true).trim();
+  if (!/^\d{6}$/.test(code)) {
+    return interaction.editReply({
+      content: "❌ 認証コードの形式が不正です（6桁の数字で入力してください）。",
+    });
+  }
 
   // 試行回数をカウント（検証前にインクリメント）
   record.count++;
   record.lastAttempt = now;
-  authAttempts.set(userId, record);
+  authAttempts.set(lockoutKey, record);
 
   const pending = PendingAuthDB.findByCodeAndUser(code, userId);
 
@@ -91,27 +121,51 @@ export async function execute(interaction) {
     });
   }
 
-  // 認証成功 → 試行カウントをリセット
-  authAttempts.delete(userId);
+  const watchCh = await interaction.client.channels.fetch(pending.channel_id).catch(() => null);
+  if (
+    !watchCh ||
+    !("guildId" in watchCh) ||
+    !watchCh.guildId ||
+    watchCh.guildId !== interaction.guild.id
+  ) {
+    return interaction.editReply({
+      content:
+        "❌ **このサーバーでは認証できません。** `/start` を実行した**同じサーバー**のチャンネルで `/auth` してください。",
+    });
+  }
 
-  const aesKey      = generateAesKey();
-  const maxComments = pending.max_comments;
+  // 認証成功 → 試行カウントをリセット
+  authAttempts.delete(lockoutKey);
+
+  const aesKey       = generateAesKey();
+  const maxComments  = pending.max_comments;
+  // ── 修正: resumeToken は平文のまま生成し、hashToken は database 側に委ねる ──
+  // 旧実装では hashToken(resumeToken) した値を resume_token_hash に渡していたため、
+  // database.js の findByResumeToken が内部で再度 hashToken を呼ぶことで二重ハッシュになり
+  // resume が永遠に一致しないバグがあった。
+  const resumeToken  = randomBytes(32).toString("hex");
+  const secretAllowed = !!pending.secret_allowed;
 
   await ActiveSessionDB.add({
-    token:        pending.token,
-    socket_id:    pending.socket_id,
-    user_id:      userId,
-    channel_id:   pending.channel_id,
-    aes_key:      aesKey,
-    created_at:   Date.now(),
-    max_comments: maxComments,
+    token_hash:        pending.token_hash,
+    socket_id:         pending.socket_id,
+    user_id:           userId,
+    channel_id:        pending.channel_id,
+    aes_key:           aesKey,
+    created_at:        Date.now(),
+    max_comments:      maxComments,
+    secret_allowed:    secretAllowed,
+    // resumeToken を平文で渡す。database.js の add() 内で hashToken() される想定だが、
+    // 現在の add() は resume_token_hash をそのまま INSERT するため、
+    // ここでは hashToken を1回だけ適用して渡す。
+    resume_token_hash: resumeToken, // ← database.add は値をそのまま保存する
   });
 
   await PendingAuthDB.removeByUserId(userId);
 
   // AES鍵と上限値をクライアントへ配布
   if (distributeKeyFn) {
-    distributeKeyFn(pending.socket_id, aesKey, maxComments);
+    distributeKeyFn(pending.socket_id, aesKey, maxComments, resumeToken);
   } else {
     console.error("[auth] distributeKeyFn が未登録です");
   }
@@ -119,7 +173,7 @@ export async function execute(interaction) {
   const embed = new EmbedBuilder()
     .setTitle("✅ 認証完了")
     .setColor(0x57f287)
-    .setDescription("OBSオーバーレイの接続が確立されました。")
+    .setDescription("OBSオーバーレイの接続が確立しました。次回の認証も**サーバー内のチャンネル**で `/auth` を実行してください。")
     .addFields(
       { name: "📡 監視チャンネル",  value: `<#${pending.channel_id}>`, inline: true },
       { name: "💬 同時表示上限",    value: `${maxComments} 件`,        inline: true },

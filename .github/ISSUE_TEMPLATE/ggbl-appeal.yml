@@ -1,0 +1,63 @@
+name: グローバルギルドブラックリストの異議申し立て
+description: サーバー（ギルド）がグローバルギルドブラックリストに登録されている場合の異議申し立て用テンプレートです。
+title: "[Guild Appeal]: "
+labels: ["appeal", "guild-blacklist"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ 注意事項
+        - このフォームは **グローバルギルドブラックリスト（サーバー単位）** の異議申し立て専用です。
+        - ユーザー個別のブラックリスト解除は「グローバルブラックリストの異議申し立て」テンプレートを使用してください。
+        - 事実と異なる情報や、不十分な情報しかない場合、対応ができない・遅れることがあります。
+        - 個人情報や本人確認情報を含む場合は、Issue作成画面の「機微情報を含む異議申し立てフォーム（非公開）」を利用してください。
+
+  - type: input
+    id: guild_name
+    attributes:
+      label: サーバー名
+      placeholder: "例: 〇〇配信コミュニティ"
+    validations:
+      required: true
+
+  - type: input
+    id: guild_id
+    attributes:
+      label: サーバーID (ギルドID)
+      description: Discord の開発者モードを有効にし、サーバー名を右クリックして ID をコピーしてください。
+      placeholder: "例: 123456789012345678"
+    validations:
+      required: true
+
+  - type: input
+    id: owner_id
+    attributes:
+      label: サーバー所有者のユーザーID
+      description: 所有者自身が問い合わせている場合は、自分のユーザーIDを記載してください。
+      placeholder: "例: 123456789012345678"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notification_context
+    attributes:
+      label: DM 通知の内容・状況
+      description: Bot から届いた DM の全文（スクリーンショット可）と、届いた日時・状況（招待した直後 / もともと参加していた 等）を記載してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason_inquiry
+    attributes:
+      label: 異議申し立ての趣旨
+      description: なぜ解除されるべきだと考えるか、現在把握している BAN 理由や経緯をできるだけ詳しく記載してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 補足・証拠・関連リンク
+      description: 必要に応じて、関連スクリーンショットや外部ページのリンク、運営ポリシー等があれば記載してください（画像の貼り付けも可）。
+    validations:
+      required: false

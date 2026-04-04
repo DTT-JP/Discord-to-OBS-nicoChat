@@ -1,0 +1,20 @@
+name: その他のお問合せ
+description: 上記カテゴリに当てはまらない内容はこちらからご連絡ください。
+title: "[Inquiry]: "
+labels: ["question"]
+body:
+  - type: textarea
+    id: content
+    attributes:
+      label: 内容の詳細
+      description: お問い合わせ内容を具体的に記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: supplemental
+    attributes:
+      label: 補足情報
+      description: エラーログや参考資料などがあれば。
+    validations:
+      required: false
+

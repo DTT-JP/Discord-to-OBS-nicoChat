@@ -6,11 +6,40 @@ export function isAdminOrOwner(interaction) {
 
 export function parseTargetUser(interaction, userOption = "user", idOption = "user_id") {
   const user = interaction.options.getUser(userOption, false);
-  const rawId = interaction.options.getString(idOption, false)?.trim();
+  const rawId = interaction.options.getString(idOption, false)?.trim() ?? "";
+
+  if (user && rawId && user.id !== rawId) {
+    return {
+      error: "❌ `user`（@メンション）と `user_id` が別のユーザーになっています。どちらか一方だけ指定してください。",
+    };
+  }
+
   const userId = user?.id ?? rawId;
-  if (!userId) return { error: "❌ `user` または `user_id` のどちらかを指定してください。" };
-  if (!/^\d{17,20}$/.test(userId)) return { error: "❌ ユーザーIDの形式が正しくありません（17〜20桁の数字）。" };
+  if (!userId) {
+    return { error: "❌ `user`（@メンション）または `user_id`（17〜20桁の数字）のどちらかを指定してください。" };
+  }
+  if (!/^\d{17,20}$/.test(userId)) {
+    return {
+      error: "❌ ユーザーIDの形式が正しくありません（17〜20桁の数字）。または `@ユーザー` で指定してください。",
+    };
+  }
+
   return { user, userId };
+}
+
+/**
+ * 応答メッセージ用の表示名（メンション無しでも API で解決を試みる）
+ * @param {import("discord.js").Client} client
+ * @param {{ user?: import("discord.js").User | null, userId: string }} target
+ */
+export async function formatUserTagForReply(client, target) {
+  if (target.user) return target.user.tag;
+  try {
+    const u = await client.users.fetch(target.userId);
+    return u.tag;
+  } catch {
+    return `\`${target.userId}\``;
+  }
 }
 
 export function computeExpireAt(durationType, durationValue) {

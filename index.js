@@ -12,9 +12,16 @@ import {
   LimitedCollection,
 } from "discord.js";
 import { createSocketServer } from "./socket/server.js";
-import { initSocketManager } from "./socket/manager.js";
-import { ActiveSessionDB, PendingAuthDB } from "./database.js";
+import { initSocketManager, setSocketShuttingDown } from "./socket/manager.js";
+import {
+  ActiveSessionDB,
+  PendingAuthDB,
+  migrateLegacyJsonIfNeeded,
+  getRestoredSessionCounts,
+  closeDatabase,
+} from "./database.js";
 import { safeForLog } from "./utils/logSafe.js";
+import { assertCorsEnvForStartup } from "./utils/corsPolicy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -22,16 +29,24 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // 環境変数バリデーション
 // ─────────────────────────────────────────────
 
-const REQUIRED_ENV = ["DISCORD_TOKEN", "CLIENT_ID", "PORT", "HOST"];
+const REQUIRED_ENV = ["DISCORD_TOKEN", "CLIENT_ID", "PORT", "HOST", "MASTER_KEY"];
 
 for (const key of REQUIRED_ENV) {
-  if (!process.env[key]) {
+  if (!process.env[key]?.trim()) {
     console.error(`[init] 環境変数 ${key} が設定されていません`);
     process.exit(1);
   }
 }
 
+assertCorsEnvForStartup();
+
 const PORT = Number(process.env.PORT);
+
+migrateLegacyJsonIfNeeded();
+{
+  const { pending, active } = getRestoredSessionCounts();
+  console.log(`[init] SQLite セッション状態: pending_auth=${pending} active_sessions=${active}`);
+}
 
 // ─────────────────────────────────────────────
 // Discord クライアント初期化
@@ -184,6 +199,23 @@ const cleanupTimer = setInterval(async () => {
 // タイマーが Node.js プロセスの終了を妨げないようにする
 cleanupTimer.unref();
 
+// 切断後に socket_id='' となったままのセッションを削除（一定期間 resume を許容）
+const ACTIVE_DISCONNECTED_GRACE_MS = 30 * 60 * 1000; // 30分
+const ACTIVE_SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10分ごと
+
+const activeCleanupTimer = setInterval(async () => {
+  try {
+    const removed = await ActiveSessionDB.cleanupDisconnectedSessions(ACTIVE_DISCONNECTED_GRACE_MS);
+    if (removed > 0) {
+      console.log(`[cleanup] 切断済み active_sessions を削除しました: removed=${removed}`);
+    }
+  } catch (err) {
+    console.error("[cleanup] active_sessions クリーンアップ中のエラー:", safeForLog(err));
+  }
+}, ACTIVE_SESSION_CLEANUP_INTERVAL_MS);
+
+activeCleanupTimer.unref();
+
 // ─────────────────────────────────────────────
 // グレースフルシャットダウン
 // ─────────────────────────────────────────────
@@ -195,17 +227,22 @@ cleanupTimer.unref();
 async function shutdown(signal) {
   console.log(`\n[shutdown] ${signal} を受信しました。クリーンアップを開始します...`);
 
-  // タイマー停止
+  // 修正: 両タイマーを先に停止する。
+  // activeCleanupTimer を止めずにいると、flushSessionsForProcessRestart() が
+  // socket_id を空にした直後に cleanupDisconnectedSessions が走り、
+  // 起動直後の正規セッションを誤って削除するリスクがあった。
   clearInterval(cleanupTimer);
+  clearInterval(activeCleanupTimer);
 
   try {
-    // 1. 全アクティブセッションを DB から削除
-    await ActiveSessionDB.removeAll();
-    console.log("[shutdown] アクティブセッションを全削除しました");
+    // 1. disconnect ハンドラを抑止
+    setSocketShuttingDown(true);
+    console.log("[shutdown] Socket disconnect ハンドラを停止しました");
 
-    // 2. 全 pending_auth を削除
-    await PendingAuthDB.removeExpired();
-    console.log("[shutdown] 期限切れ pending_auth を削除しました");
+    // 2. 全セッションを明示的に破棄
+    await PendingAuthDB.removeAll();
+    await ActiveSessionDB.removeAll();
+    console.log("[shutdown] pending_auth / active_sessions を全削除しました");
 
     // 3. Socket.io の全接続を切断
     await new Promise((resolve) => {
@@ -222,6 +259,9 @@ async function shutdown(signal) {
     // 5. Discord Bot をログアウト
     await client.destroy();
     console.log("[shutdown] Discord Bot をログアウトしました");
+
+    closeDatabase();
+    console.log("[shutdown] SQLite をクローズしました");
 
     console.log("[shutdown] クリーンアップ完了。プロセスを終了します");
     process.exit(0);

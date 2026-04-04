@@ -1,0 +1,39 @@
+name: グローバルブラックリストの推薦や通報
+description: グローバルブラックリストへの登録推薦・通報用テンプレートです。
+title: "[Global BL Report]: "
+labels: ["gbl-report", "user-blacklist"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ 公開情報の注意
+        - このIssueは公開されます。住所・電話番号・メール等の個人情報は記載しないでください。
+        - メッセージ本文は必要最小限のみ引用し、不要なユーザー情報はマスクしてください。
+        - 個人情報や秘匿情報を含む証拠が必要な場合は、Issue作成画面の「機微情報を含む通報フォーム（非公開）」を利用してください。
+  - type: input
+    id: target_username
+    attributes:
+      label: 報告対象のユーザー名 (@ID)
+    validations:
+      required: true
+  - type: input
+    id: target_user_id
+    attributes:
+      label: 報告対象のユーザーID (数字)
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: 推薦・報告の理由
+      description: どのような迷惑行為、規約違反があったか詳しく記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 証拠 (発言内容など)
+      description: スクリーンショットの貼り付けや、メッセージリンク、ログなど。
+    validations:
+      required: false
+

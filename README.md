@@ -1,652 +1,207 @@
 # Discord-to-OBS-nicoChat
 
-> Discordのチャンネルをニコニコ動画風コメントでOBSにリアルタイム配信するBot
+Discord のメッセージを、ニコニコ動画風コメントとして OBS に表示する BOT です。  
+通常は**公開BOTを招待して使う運用**が簡単で、**セルフホストは必要な場合のみ**選ぶ前提で構成しています。
 
-AES-256-GCM暗号化・2段階認証・複数サーバー対応のセルフホスト型オーバーレイシステムです。
+## まずどちらで使うか
 
----
+### 1) 公開BOTを使う（推奨）
 
-## 目次
+インフラ運用なしで、すぐに使い始めたい方向けです。
 
-- [機能一覧](#機能一覧)
-- [Discordへの招待](#Discordへの招待)
-- [動作環境](#動作環境)
-- [インストール手順](#インストール手順)
-- [環境変数の設定](#環境変数の設定)
-- [Discord Developer Portal の設定](#discord-developer-portal-の設定)
-- [スラッシュコマンドの登録](#スラッシュコマンドの登録)
-- [起動](#起動)
-- [HTTPS化・外部公開](#https化外部公開)
-- [使い方](#使い方)
-  - [初回セットアップ（サーバーオーナー・管理者）](#初回セットアップサーバーオーナー管理者)
-  - [OBS配信の開始フロー](#obs配信の開始フロー)
-  - [メタデータ書式](#メタデータ書式)
-  - [テキスト装飾](#テキスト装飾)
-  - [絵文字・スタンプ](#絵文字スタンプ)
-  - [セッション管理](#セッション管理)
-- [コマンドリファレンス](#コマンドリファレンス)
-- [OBSの設定方法](#obsの設定方法)
-- [バージョン管理](#バージョン管理)
-- [ディレクトリ構成](#ディレクトリ構成)
-- [セキュリティについて](#セキュリティについて)
-- [トラブルシューティング](#トラブルシューティング)
-- [お問い合わせ](#お問い合わせ)
+- 招待URL: [https://discord.com/oauth2/authorize?client_id=1484621724015399032](https://discord.com/oauth2/authorize?client_id=1484621724015399032)
+- 使い方は `「公開BOTの最短手順」` を参照
 
----
+### 2) 自分で立てる（セルフホスト）
 
-## 機能一覧
+次のような要件がある場合に向いています。
 
-- Discordの指定チャンネルのメッセージをリアルタイムでOBSへ配信
-- ニコニコ動画風の横スクロールコメント表示（速度は文字数に応じて動的調整）
-- AES-256-GCM暗号化による安全な通信
-- カスタム絵文字のインライン画像表示（サイズはテキストのフォントサイズに連動）
-- 改行・AA（アスキーアート）対応（空白・位置が崩れない）
-- Discord書式（太字・斜体・下線・取り消し線・見出し）の反映
-- `? ?` メタデータ書式による色・サイズ・位置指定（テキストのどこに書いてもOK）
-- 上下固定表示モード（各コメント個別タイマー管理・消えても位置を詰めない）
-- セッションごとの同時表示上限設定（1〜99999）・配信中のリアルタイム変更
-- グローバルブラックリスト（Bot製作者専用・全サーバー共通遮断）
-- 複数サーバーへの独立した対応（サーバーごとに設定が完全分離）
-- ローカル運用・HTTPS外部公開の両対応（`PUBLIC_URL` で切り替え）
-- CPU・メモリ使用率・バージョン情報のリアルタイム表示（`/status`）
-- 衝突判定によるコメントの重なり防止
+- 独自ドメインや独自インフラで運用したい
+- 動作をカスタマイズしたい
+- セキュリティポリシー上、自前管理が必要
 
----
+## このREADMEの方針
 
-## Discordへの招待
+- 「公開BOT利用」を先に、セルフホスト手順を後に記載しています
+- 一部の内部運用用コマンドは意図的に記載していません
+- 最終仕様はソースコード（`index.js` / `events/interactionCreate.js` / `commands/*.js`）を正とします
 
-招待URLはこちら → **[https://discord.com/oauth2/authorize?client_id=1484621724015399032]**
+## ドキュメント索引
 
-## 公開BOTでは以下のプライバシーポリシーおよび利用規約が適用されます
+| ドキュメント | 内容 |
+|---|---|
+| [docs/environment.md](docs/environment.md) | `.env` 設定ガイド |
+| [docs/ALLOWED_ORIGINS.md](docs/ALLOWED_ORIGINS.md) | CORS / `ALLOWED_ORIGINS` 運用 |
+| [docs/message-format.md](docs/message-format.md) | メタデータ書式・表示ルール |
+| [docs/https-publication.md](docs/https-publication.md) | HTTPS公開手順（Cloudflare / nginx） |
+| [docs/security.md](docs/security.md) | セキュリティ要点 |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | よくある不具合と対処 |
+| [docs/directory-structure.md](docs/directory-structure.md) | ディレクトリ構成 |
 
-プライバシーポリシー　→ **[https://d2obs.dtt.f5.si/privacy]**
+## 主な機能
 
-利用規約　→ **[https://d2obs.dtt.f5.si/terms]**
+- Discord チャンネルのメッセージを OBS にリアルタイム表示
+- ニコニコ動画風スクロール表示（文字数ベースで速度調整）
+- `? ... ?` メタデータによる色・サイズ・位置指定
+- 6桁コードを使った認証フロー（`/start` → `/auth`）
+- AES-256-GCM 暗号化によるメッセージ転送
+- グローバル / サーバー別ブラックリスト
+- `/session` による同時表示上限の調整（1〜99999）
 
----
+## 公開BOTの最短手順（推奨）
 
-## 動作環境
+1. 公開BOTをサーバーに招待
+2. 権限担当が `/config` と `/setup` を設定
+3. `/start channel:#チャンネル [limit:数値]` を実行
+4. DM の URL を OBS ブラウザソースへ設定
+5. 表示された 6 桁コードを同じサーバーで `/auth`
+
+公開BOTの規約:
+- プライバシーポリシー: [https://d2obs.dtt.f5.si/privacy](https://d2obs.dtt.f5.si/privacy)
+- 利用規約: [https://d2obs.dtt.f5.si/terms](https://d2obs.dtt.f5.si/terms)
+
+## セルフホストする場合
+
+公開BOTで要件を満たせない場合だけ、この章以降を実施してください。
+
+## 動作環境（セルフホスト）
 
 | 項目 | 要件 |
 |---|---|
-| Node.js | v22.0.0 以上 |
+| Node.js | v22.0.0以上（`package.json` の `engines` 参照） |
 | OS | Windows / macOS / Linux |
-| Discord | Bot アカウント（後述） |
-| OBS Studio | ブラウザソース対応バージョン |
+| Discord | Botアカウント |
+| OBS Studio | ブラウザソース対応版 |
 
----
+## セットアップ（セルフホスト）
 
-## インストール手順
-
-### 1. リポジトリのクローン
+### 1) リポジトリ取得
 
 ```bash
-git clone https://github.com/DTT-JP/Discord-to-OBS-nicoChat
-cd discord-obs-overlay
+git clone https://github.com/DTT-JP/Discord-to-OBS-nicoChat.git
+cd Discord-to-OBS-nicoChat
 ```
 
-### 2. 依存パッケージのインストール
+### 2) 依存インストール
 
 ```bash
 npm install
 ```
 
-### 3. 環境変数ファイルの作成
+### 3) `.env` 作成
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` をテキストエディタで開き、各項目を設定します（次章参照）。
+必須項目は `DISCORD_TOKEN` / `CLIENT_ID` / `PORT` / `HOST` / `MASTER_KEY` です。  
+詳細は [docs/environment.md](docs/environment.md) を参照してください。
 
----
+### 4) Discord Developer Portal 設定
 
-## 環境変数の設定
+1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリを作成
+2. Application ID を `CLIENT_ID` に設定
+3. Botトークンを `DISCORD_TOKEN` に設定
+4. `SERVER MEMBERS INTENT` / `MESSAGE CONTENT INTENT` を有効化
+5. OAuth2 で `bot` と `applications.commands` を付与して招待
 
-`.env` ファイルを編集します。
-
-```env
-# ═══════════════════════════════════════════════
-# Discord-to-OBS-nicoChat — 環境変数設定ファイル
-# ═══════════════════════════════════════════════
-
-# ── Discord 認証情報 ──────────────────────────────
-DISCORD_TOKEN=ここにBotトークンを入力
-CLIENT_ID=ここにアプリケーションIDを入力
-# GUILD_ID=ここにギルドIDを入力  ← 通常不要
-
-# ── Bot製作者設定 ──────────────────────────────────
-# /blacklist コマンドを実行できるDiscord ユーザーID
-BOT_OWNER_ID=ここにBot製作者のDiscordユーザーIDを入力
-# グローバルBLユーザー向けの異議申し立てURL（/my-status で表示）
-GLOBAL_BLACKLIST_APPEAL_URL=
-
-# ── サーバー設定 ──────────────────────────────────
-PORT=3000
-HOST=localhost
-
-# 公開URL（HTTPS化する場合のみ設定）
-# 未設定の場合は http://HOST:PORT が使われる
-# 末尾のスラッシュは不要
-PUBLIC_URL=
-
-# ── コメント表示設定 ──────────────────────────────
-MAX_COMMENTS=30
-
-# ── 認証設定 ──────────────────────────────────────
-CODE_EXPIRE_MINUTES=10
-```
-
-### 各項目の説明
-
-| 項目 | 必須 | 説明 |
-|---|---|---|
-| `DISCORD_TOKEN` | ✅ | BotのトークンをDeveloper Portalから取得 |
-| `CLIENT_ID` | ✅ | アプリケーションID（General Information > Application ID） |
-| `GUILD_ID` | — | 通常不要。開発時にコマンドを即時反映したい場合のみ設定 |
-| `BOT_OWNER_ID` | ✅ | `/blacklist` コマンドを実行できるBot製作者のDiscord ID |
-| `PORT` | ✅ | Expressサーバーのポート番号（デフォルト: 3000） |
-| `HOST` | ✅ | URLの生成に使うホスト名（`PUBLIC_URL` 設定時は参照されない） |
-| `PUBLIC_URL` | — | HTTPS公開時に設定。設定すると `http://HOST:PORT` より優先 |
-| `ALLOWED_ORIGINS` | — | Socket.io の CORS 許可オリジン（カンマ区切り）。未設定時は OBSブラウザ（null origin）に加えて localhost / 127.0.0.1 も許可 |
-| `MAX_COMMENTS` | ✅ | 同時表示コメントのデフォルト上限数（デフォルト: 30） |
-| `CODE_EXPIRE_MINUTES` | ✅ | 認証コードの有効期限（分、デフォルト: 10） |
-
-### HOST と PUBLIC_URL の使い分け
-
-| 運用方法 | 設定 |
-|---|---|
-| 自分のPCのOBSのみで使う | `HOST=localhost`、`PUBLIC_URL` は空 |
-| LAN内の別PCのOBSで使う | `HOST=192.168.1.10`（このPCのIP）、`PUBLIC_URL` は空 |
-| インターネット越しにHTTPSで使う | `PUBLIC_URL=https://overlay.example.com` を設定 |
-
----
-
-## Discord Developer Portal の設定
-
-### 1. アプリケーションの作成
-
-1. [Discord Developer Portal](https://discord.com/developers/applications) を開く
-2. **New Application** をクリックしてアプリを作成
-3. **General Information** ページの **Application ID** をコピーして `.env` の `CLIENT_ID` に貼り付ける
-
-### 2. Bot の作成とトークン取得
-
-1. 左メニューの **Bot** を開く
-2. **Add Bot** をクリック
-3. **Token** セクションで **Reset Token** → トークンをコピーして `.env` の `DISCORD_TOKEN` に貼り付ける
-4. **Privileged Gateway Intents** セクションで以下を **ON** にする
-
-| Intent | 用途 |
-|---|---|
-| **SERVER MEMBERS INTENT** | メンバーの表示名・ロール取得 |
-| **MESSAGE CONTENT INTENT** | メッセージ本文の読み取り |
-
-### 3. BotをサーバーへInvite
-
-1. 左メニューの **OAuth2 > URL Generator** を開く
-2. **SCOPES** で `bot` と `applications.commands` を選択
-3. **BOT PERMISSIONS** で以下を選択
-
-| 権限 | 用途 |
-|---|---|
-| Send Messages | コマンド結果の送信 |
-| Send Messages in Threads | スレッド内での返信 |
-| Read Message History | メッセージ履歴の読み取り |
-| View Channels | チャンネルの閲覧 |
-
-4. 生成されたURLをブラウザで開き、対象サーバーにBotを追加する
-
----
-
-## スラッシュコマンドの登録
-
-**Botを起動する前に一度だけ実行**します。コマンドの追加・変更時も再実行が必要です。
+### 5) スラッシュコマンド登録
 
 ```bash
 npm run deploy-commands
 ```
 
-> グローバルコマンドとして登録されます。反映まで最大1時間かかる場合があります。
-
----
+グローバルコマンドの反映には最大約1時間かかる場合があります。  
+`commands/*.js` の定義変更後は再登録が必要です。
 
 ## 起動
 
 ```bash
-# 通常起動
 npm start
+```
 
-# ファイル変更を自動検知して再起動（開発時）
+開発時:
+
+```bash
 npm run dev
 ```
 
-起動成功時のログ例：
+## 使い方（セルフホスト）
 
-```
-[init] コマンドロード: /auth
-[init] コマンドロード: /blacklist
-[init] コマンドロード: /help
-[init] コマンドロード: /secret
-[init] コマンドロード: /setup
-[init] コマンドロード: /setlimit
-[init] コマンドロード: /start
-[init] コマンドロード: /status
-[init] HTTP/Socket.io サーバー起動: http://localhost:3000
-[ready] BotName#0000 としてログインしました
-```
+1. 権限担当が `/config` と `/setup` で運用権限を設定
+2. `/start channel:#チャンネル [limit:数値]` を実行
+3. DM で届く URL を OBS ブラウザソースへ設定
+4. 表示される 6 桁コードを同じサーバーで `/auth`
+5. 認証後、オーバーレイ表示を開始
 
----
+補足:
 
-## HTTPS化・外部公開
+- `/auth` は DM では実行できません
+- メタデータ書式は [docs/message-format.md](docs/message-format.md) を参照
 
-OBSが別のPCにある場合や、インターネット越しに利用したい場合はHTTPS化が推奨されます。
-設定後は `.env` の `PUBLIC_URL` にそのURLを記入し、Botを再起動してください。
+## 公開コマンドリファレンス
 
-### 方法A: Cloudflare Tunnel（無料・ドメイン不要・最も簡単）
+このセクションは公開情報のみを記載しています。
 
-```bash
-# インストール
-winget install Cloudflare.cloudflared   # Windows
-brew install cloudflared                # macOS
-
-# 一時トンネルを作成（ドメインが自動発行される）
-cloudflared tunnel --url http://localhost:3000
-
-# 出力例:
-# https://xxxxxxxx.trycloudflare.com  ← これを PUBLIC_URL に設定する
-```
-
-`.env` の設定：
-
-```env
-PUBLIC_URL=https://xxxxxxxx.trycloudflare.com
-```
-
-> 一時トンネルはプロセスを再起動するたびにURLが変わります。固定URLにするには
-> [Cloudflare Tunnel の永続設定](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) を参照してください。
-
-### 方法B: nginx リバースプロキシ（独自ドメインあり）
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name overlay.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/overlay.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/overlay.example.com/privkey.pem;
-
-    location / {
-        proxy_pass         http://localhost:3000;
-        proxy_http_version 1.1;
-
-        # Socket.io の WebSocket に必須
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-`.env` の設定：
-
-```env
-PUBLIC_URL=https://overlay.example.com
-```
-
----
-
-## 使い方
-
-### 初回セットアップ（サーバーオーナー・管理者）
-
-Botを導入したサーバーで最初に `/setup` コマンドを使用し、`/start` を実行できるユーザー・ロールを設定します。
-
-```
-/setup allow_role role:@配信者
-/setup allow_user user:@ユーザー名
-/setup list
-```
-
----
-
-### OBS配信の開始フロー
-
-```
-① /start channel:#チャンネル名 [limit:数値]
-```
-→ BotからDMにOBSブラウザソース用のURLが届きます
-
-```
-② OBS Studio でブラウザソースを追加
-```
-→ URLを貼り付けてソースを追加します（設定は後述）
-→ 画面に6桁の認証コードが表示されます
-
-```
-③ /auth [6桁のコード]
-```
-→ Discordで認証コードを入力します
-→ 「認証完了」と表示されればOKです
-→ OBSの画面から認証コードが消え、コメント配信が開始されます
-
----
-
-### セッションの終了
-
-OBSのブラウザソースタブを閉じる・再読み込み・OBSを終了するといった操作でブラウザとサーバー間の接続（WebSocket）が切断され、セッションは自動的に終了します。セッション終了後は再度 `/start` から手順をやり直してください。
-
----
-
-### メタデータ書式
-
-メッセージ内の `?` と `?` の間に属性を指定します。**テキストのどこに書いても認識されます。**
-
-```
-?属性1 属性2? 本文テキスト
-本文テキスト ?属性1 属性2?
-本文 ?属性? テキスト
-```
-
-属性は半角スペース区切りで複数指定できます。順番は問いません。
-
-#### 色指定
-
-| 値 | 色 |
-|---|---|
-| `white` | 白 (#FFFFFF) |
-| `red` | 赤 (#FF4040) |
-| `pink` | ピンク (#FF80C0) |
-| `yellow` | 黄 (#FFE133) |
-| `orange` | オレンジ (#FF9933) |
-| `green` | 緑 (#33DD44) |
-| `cyan` | シアン (#33DDFF) |
-| `blue` | 青 (#4488FF) |
-| `purple` | 紫 (#AA44FF) |
-| `black` | 黒 (#111111) |
-| `#HEXコード` | 任意の色（例: `#ff8800`） |
-
-#### サイズ指定
-
-| 値 | サイズ | 備考 |
-|---|---|---|
-| `big` | 大（12vh） | 画面縦の12% |
-| `medium` | 中（6vh）・デフォルト | 画面縦の6% |
-| `small` | 小（3vh） | 画面縦の3% |
-
-Discord書式の見出し記号でもサイズを指定できます。
-
-| Discord書式 | サイズ |
-|---|---|
-| `# テキスト` | big（12vh） |
-| `## テキスト` / `### テキスト` | medium（6vh） |
-| `-# テキスト` | small（3vh） |
-
-メタデータ書式での指定が最優先です。
-
-#### 位置指定
-
-| 値 | 効果 |
-|---|---|
-| `ue` | 画面上部に固定表示（5秒後に消去） |
-| `shita` | 画面下部に固定表示（5秒後に消去） |
-
-位置指定なし → 画面を横断して流れます。
-
-上下固定コメントは各コメントが個別タイマーで管理されます。消えても他のコメントの位置は動きません。空いたスロットには次の新しいコメントが入ります。
-
-#### 記述例
-
-```
-?red ue? お知らせ                   → 赤色・上部固定表示
-?blue big? **重要** テキスト        → 青色・大文字・太字・流れる
-テキスト ?shita green?              → 緑色・下部固定（末尾でもOK）
-?#ff8800 big ue? カスタムカラー     → HEX色・大文字・上部固定
-```
-
----
-
-### テキスト装飾
-
-Discord の通常書式がそのまま反映されます。
-
-| 書式 | 効果 |
-|---|---|
-| `**テキスト**` | 太字 |
-| `*テキスト*` | 斜体 |
-| `__テキスト__` | 下線 |
-| `~~テキスト~~` | 取り消し線 |
-
-複数組み合わせ可能です（例: `**__太字下線__**`）。改行（Shift+Enter）で複数行表示・AA対応です。
-
----
-
-### 絵文字・スタンプ
-
-サーバーのカスタム絵文字（`<:name:id>`）はOBS上にも画像としてインライン表示されます。絵文字のサイズはテキストのフォントサイズに連動します。Unicode絵文字（😊など）はテキストとしてそのまま表示されます。
-
----
-
-### セッション管理
-
-#### 同時表示上限の指定
-
-```
-/start channel:#チャンネル名 limit:100
-```
-
-未指定の場合は `.env` の `MAX_COMMENTS`（デフォルト: 30）が使われます。上限は1〜99999まで設定可能です。
-
-#### 配信中の上限変更
-
-セッションを停止せずにリアルタイムで変更できます。
-
-```
-/setlimit limit:50
-```
-
----
-
-## コマンドリファレンス
-
-### 公開コマンド
-
-| コマンド | 権限 | 説明 |
-|---|---|---|
-| `/setup allow_role @ロール` | サーバーオーナー・管理者 | `/start` を許可するロールを追加 |
-| `/setup remove_role @ロール` | サーバーオーナー・管理者 | `/start` の許可ロールを削除 |
-| `/setup allow_user @ユーザー` | サーバーオーナー・管理者 | `/start` を許可するユーザーを追加 |
-| `/setup remove_user @ユーザー` | サーバーオーナー・管理者 | `/start` の許可ユーザーを削除 |
-| `/setup list` | サーバーオーナー・管理者 | 現在の許可リストを表示 |
-| `/start #ch [limit:数値]` | 許可済みユーザー | OBSオーバーレイのセッションを開始 |
-| `/auth [6桁コード]` | 許可済みユーザー | OBSブラウザの認証コードを入力して接続を確立（5回失敗で5分ロック） |
-| `/setlimit limit:数値` | 許可済みユーザー | 配信中のセッションの同時表示上限を変更（1〜99999） |
-| `/status` | 許可済みユーザー | CPU・メモリ使用率・バージョン・セッション状況を表示 |
-| `/help` | 誰でも | コマンド一覧と使い方を表示 |
-
-### Bot製作者専用コマンド
+### 一般（グローバルBL対象外ユーザー）
 
 | コマンド | 説明 |
 |---|---|
-| `/blacklist add [ユーザーID]` | グローバルブラックリストに追加（全サーバー共通で完全遮断） |
-| `/blacklist remove [ユーザーID]` | グローバルブラックリストから削除 |
-| `/blacklist list` | ブラックリストの一覧を表示 |
+| `/help` | ヘルプ表示 |
+| `/status` | CPU・メモリ・バージョン・セッション情報 |
+| `/my-status` | 自分のBL照会（サーバー設定が有効な場合） |
 
-> ブラックリストに登録されたユーザーはコマンドへの反応とオーバーレイへのメッセージ表示が全サーバーで無効になります。
+### `/start` 許可ユーザー、またはサーバーオーナー・管理者
 
-> 一部コマンドは非公開です。
-
----
-
-## OBSの設定方法
-
-1. OBS Studio を起動する
-2. ソースの `+` ボタン → **ブラウザ** を選択
-3. 以下のように設定する
-
-| 項目 | 値 |
+| コマンド | 説明 |
 |---|---|
-| URL | `/start` コマンドでDMに届いたURL |
-| 幅 | 配信解像度の幅（例: `1920`） |
-| 高さ | 配信解像度の高さ（例: `1080`） |
-| カスタムCSS | 空白のまま |
-| ページが表示されなくなったときにブラウザをシャットダウン | チェックを外す |
-| シーンがアクティブになったときにブラウザを更新 | 任意 |
+| `/start` | セッション開始（DMにURLを送信） |
+| `/auth` | 6桁コード認証（同じサーバー内、DM不可） |
+| `/session` | 自分のセッション設定変更（`limit` など） |
 
-4. **OK** をクリック
-5. ブラウザソース上に認証コードが表示されるので、Discordで `/auth [コード]` を実行する
+### サーバーオーナー・管理者のみ
 
-> **背景の透過について**
-> このオーバーレイは背景が透明（`transparent`）です。
-> OBSのブラウザソースはデフォルトで透過に対応しているため、クロマキーは不要です。
+| コマンド | 説明 |
+|---|---|
+| `/config` | `/setup` と `/blacklist` 操作権限の管理 |
 
-> **セッションの終了について**
-> OBSのブラウザソースタブを閉じる・再読み込み・OBSを終了するといった操作でブラウザとサーバー間のWebSocket接続が切断され、セッションは自動的に終了します。再度配信を開始するには `/start` からやり直してください。
+### サーバーオーナー・管理者、または許可済み担当
 
----
+| コマンド | 説明 |
+|---|---|
+| `/setup` | `/start` 許可対象、拒否チャンネルなどの設定 |
+| `/blacklist` | サーバー別ブラックリスト管理と照会設定 |
 
-## バージョン管理
+### 製作者専用（`BOT_OWNER_ID`）
 
-バージョン情報は `utils/version.js` で管理されています。
+| コマンド | 説明 |
+|---|---|
+| `/global_blacklist` | グローバルBL管理 |
+| `/global_guild_blacklist` | グローバルギルドBL管理 |
 
-```js
-// utils/version.js
-export const VERSION = "1.0.0";  // ← ここを書き換える
-```
+## OBS設定の目安
 
-更新後はBotを再起動すると `/status` コマンドとヘルプのフッターに反映されます。
+1. ソース追加 → ブラウザ
+2. URL に `/start` の DM で受け取ったURLを設定
+3. 幅・高さを配信解像度に合わせる（例: 1920x1080）
+4. カスタムCSSは空で可
+5. 「ページが表示されなくなったときにブラウザをシャットダウン」はオフ推奨
 
----
+## HTTPS公開（セルフホスト）
 
-## ディレクトリ構成
+外部公開する場合は [docs/https-publication.md](docs/https-publication.md) を参照してください。  
+本番では `NODE_ENV=production` と `ALLOWED_ORIGINS` 設定が必須です。
 
-```
-discord-obs-overlay/
-├── .env                      # 環境変数（要作成）
-├── .env.example              # 環境変数テンプレート
-├── package.json
-├── index.js                  # エントリーポイント・全体統合
-├── deploy-commands.js        # スラッシュコマンド一括登録
-├── database.js               # lowdb によるデータ管理
-├── db.json                   # データベースファイル（自動生成）
-├── discord/
-│   └── parser.js             # メッセージパーサー（V2メタデータ対応）
-├── commands/
-│   ├── setup.js              # /setup コマンド（管理者専用）
-│   ├── start.js              # /start コマンド（PUBLIC_URL対応）
-│   ├── auth.js               # /auth コマンド（BF保護・許可制限）
-│   ├── setlimit.js           # /setlimit コマンド（許可制限）
-│   ├── status.js             # /status コマンド（許可制限）
-│   ├── help.js               # /help コマンド
-│   ├── blacklist.js          # /blacklist コマンド（Bot製作者専用）
-│   └── secret.js             # /secret コマンド（非公開）
-├── events/
-│   ├── ready.js              # Bot起動時イベント
-│   ├── interactionCreate.js  # スラッシュコマンド受付・ブラックリスト確認
-│   └── messageCreate.js      # メッセージ受信・配信・ブラックリスト確認
-├── socket/
-│   ├── server.js             # Express + Socket.io サーバー（CORS制御）
-│   └── manager.js            # セッション管理・鍵配布・エフェクト適用
-├── public/
-│   ├── index.html            # OBSブラウザ表示画面
-│   └── script.js             # クライアントサイドJS（描画エンジン）
-└── utils/
-    ├── crypto.js             # AES-256-GCM 暗号化
-    ├── systemMonitor.js      # CPU・メモリ監視
-    └── version.js            # バージョン定数
-```
+## バージョン
 
----
+`utils/version.js` の `VERSION` を変更して再起動すると `/status` へ反映されます。
 
-## セキュリティについて
+## 補足ドキュメント
 
-**トークン認証**
-`/start` 実行時にUUID v4のワンタイムトークンを発行します。トークンには有効期限（デフォルト10分）が設定されており、期限切れのものは自動削除されます。
-
-**6桁コードによる本人確認**
-ブラウザ接続後に発行される6桁コードは、`/start` を実行したユーザーのDiscord IDと照合します。URLを知っていても異なるDiscordアカウントからは認証できません。
-
-**ブルートフォース保護**
-`/auth` コマンドには試行回数制限が設けられています。5回連続で認証に失敗した場合、5分間ロックアウトされます。
-
-**認証後のDOM保護**
-認証完了後、OBSブラウザの画面上から認証コードはDOMごと削除されます。開発者ツール等での閲覧リスクを低減します。
-
-**AES-256-GCM暗号化**
-認証完了後のメッセージは全てAES-256-GCM（認証付き暗号化）で暗号化されます。IVは毎回ランダム生成され、Auth Tagによる改ざん検知も行われます。クライアント側はWebCrypto APIで復号し、鍵は `extractable: false` でメモリから取り出せません。
-
-**CORS制限**
-Socket.io のCORSはOBSブラウザソース（null origin）と `.env` の `ALLOWED_ORIGINS` に登録されたオリジンのみ許可します。ワイルドカード（`*`）は使用しません。
-
-**コマンド権限制限**
-`/auth`・`/setlimit`・`/status` は `/setup` で許可されたロール・ユーザーのみ実行可能です。
-
-**グローバルブラックリスト**
-Bot製作者のみが操作可能なブラックリスト機能です。登録されたユーザーはコマンド実行とオーバーレイへのメッセージ表示が全サーバーで遮断されます。
-
-**セッションのスコープ分離**
-複数サーバーに導入した場合、各サーバーの設定（許可ロール・ユーザー）はサーバーIDで完全に分離されます。
-
-**メッセージは保存されない**
-Discordのメッセージは暗号化してOBSに転送後、即座に破棄されます。`db.json` には認証トークン・セッション情報・許可リスト・ブラックリストのみが保存されます。
-
----
-
-## よくあるご質問
-
-### セッションの終了について
-
-OBS、ブラウザの終了、再読み込み、タブ閉じなどにより、セッションは自動的に終了します。セッション終了後は再度 `/start` から手順をやり直してください。
----
-
-## トラブルシューティング
-
-### 認証コードが表示されない
-
-OBSのブラウザソースを右クリック → **更新** を試してください。Node.jsコンソールに `[manager] 接続確立` が出ているか確認してください。`HOST` と `PORT`（または `PUBLIC_URL`）の設定がOBSからアクセス可能なアドレスになっているか確認してください。
-
-### `/start` を実行しても「権限がありません」と表示される
-
-サーバーオーナーまたは管理者権限を持つユーザーが `/setup allow_role` または `/setup allow_user` でそのユーザー・ロールを許可リストに追加する必要があります。
-
-### `/auth` で「試行回数の上限に達しました」と表示される
-
-認証コードの入力を5回失敗するとロックアウトされます。5分後に自動解除されます。コードが合わない場合は `/start` からやり直してください。
-
-### Botが指定チャンネルを閲覧できないと言われる
-
-Discordのチャンネル設定でBotロールに「チャンネルを見る」と「メッセージ履歴を読む」の権限を付与してください。
-
-### コメントが流れない・表示されない
-
-`/auth` で認証が完了しているか確認してください（OBSの認証コード画面が消えているはずです）。ブラウザの開発者ツール（F12）のコンソールでエラーが出ていないか確認してください。
-
-### `deploy-commands` でエラーが出る
-
-`.env` の `DISCORD_TOKEN` と `CLIENT_ID` が正しく設定されているか確認してください。
-
-### HTTPS化したのにURLが `http://` になる
-
-`.env` の `PUBLIC_URL` が正しく設定されているか確認してBotを再起動してください。
-
-```env
-PUBLIC_URL=https://overlay.example.com
-```
-
-### スタンプを送ってもチャット欄に画像が出ない
-
-仕様です。スタンプはOBSのオーバーレイにのみ表示されます。Discordのチャット欄への表示はBotの制御外です。
-
-### プロセスを終了すると全セッションが切断される
-
-仕様です。プロセス終了時にDBの全アクティブセッションを削除します。再起動後は `/start` からやり直してください。
-
---- 
+- ディレクトリ構成: [docs/directory-structure.md](docs/directory-structure.md)
+- セキュリティ: [docs/security.md](docs/security.md)
+- トラブルシューティング: [docs/troubleshooting.md](docs/troubleshooting.md)
 
 ## お問い合わせ
 
-お問い合わせは本リポジトリのissueからおねがいします。
+Issue からお願いします。

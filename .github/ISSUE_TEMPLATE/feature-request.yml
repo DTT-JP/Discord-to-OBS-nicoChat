@@ -1,0 +1,26 @@
+name: 新機能追加要請
+description: 新機能の提案や既存機能の改善要望を投稿します。
+title: "[Feature Request]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: request
+    attributes:
+      label: 要望内容
+      description: どのような機能を追加・改善したいか記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: benefit
+    attributes:
+      label: 期待される効果
+      description: 導入によって得られるメリットを記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: supplemental
+    attributes:
+      label: 補足情報
+      description: 参考資料や代替案などがあれば記載してください。
+    validations:
+      required: false

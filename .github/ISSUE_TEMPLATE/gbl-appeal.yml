@@ -1,0 +1,40 @@
+name: グローバルブラックリストの異議申し立て
+description: グローバルユーザーブラックリスト登録に対する異議申し立てを行います。
+title: "[Global BL Appeal]: "
+labels: ["appeal", "user-blacklist"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ 注意事項
+        - 虚偽の報告が発覚した場合、今後の全ての異議申し立てを拒否する場合があります。
+        - 第三者によるなりすまし申請は無効です。
+        - 個人情報や本人確認情報を含む場合は、Issue作成画面の「機微情報を含む異議申し立てフォーム（非公開）」を利用してください。
+  - type: input
+    id: username
+    attributes:
+      label: ユーザー名 / Discord タグ
+      placeholder: "例: your_name#1234 または 現在の表示名"
+    validations:
+      required: true
+  - type: input
+    id: user_id
+    attributes:
+      label: ユーザーID (17〜20桁の数字)
+      placeholder: "例: 123456789012345678"
+    validations:
+      required: true
+  - type: textarea
+    id: intent
+    attributes:
+      label: 異議申し立ての趣旨
+      description: なぜ解除されるべきだと考えるか、経緯と現在の状況をできるだけ詳しく記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 補足・証拠
+      description: スクリーンショット（画像を貼り付け可）や当時の状況説明など。
+    validations:
+      required: false

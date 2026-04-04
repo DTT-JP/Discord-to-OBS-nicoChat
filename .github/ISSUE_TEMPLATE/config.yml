@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 機微情報を含む通報フォーム（非公開）
+    url: https://forms.gle/hjKTkFMCVxr9J2Tv7
+    about: 個人情報・秘匿情報・未公開証拠を含む内容は、公開Issueではなくこちらに送信してください。
+  - name: 機微情報を含む異議申し立てフォーム（非公開）
+    url: https://forms.gle/q2pdkwJDTKvzm2yu8
+    about: 住所・電話・メール・本人確認情報などを含む異議申し立ては、公開Issueではなくこちらに送信してください。

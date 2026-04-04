@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from "discord.js";
-import { ActiveSessionDB, AllowedPrincipalDB } from "../database.js";
+import { ActiveSessionDB } from "../database.js";
 import { getSystemSnapshot } from "../utils/systemMonitor.js";
 import { VERSION } from "../utils/version.js";
 
@@ -8,14 +8,7 @@ export const data = new SlashCommandBuilder()
   .setDescription("Botのシステム状態とアクティブセッション数を表示します");
 
 export async function execute(interaction) {
-  // ── setup で許可されたロール/ユーザーのみ実行可能 ──
-  const member = interaction.member;
-  if (!AllowedPrincipalDB.isAllowed(member)) {
-    return interaction.reply({
-      content: "❌ このコマンドを実行する権限がありません。\nサーバーオーナーに `/setup allow_role` または `/setup allow_user` での許可を依頼してください。",
-      flags: MessageFlags.Ephemeral,
-    });
-  }
+  // 実行可否は interactionCreate のグローバルブラックリストのみ（ローカル BL はコマンドを遮断しない）
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
