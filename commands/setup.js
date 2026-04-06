@@ -56,7 +56,15 @@ export const data = new SlashCommandBuilder()
       .setName("add_deny_channel")
       .setDescription("/start で指定禁止のチャンネルを追加")
       .addChannelOption((opt) =>
-        opt.setName("channel").setDescription("対象チャンネル").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true),
+        opt
+          .setName("channel")
+          .setDescription("対象チャンネル（テキスト / VC / ステージ）")
+          .addChannelTypes(
+            ChannelType.GuildText,
+            ChannelType.GuildVoice,
+            ChannelType.GuildStageVoice,
+          )
+          .setRequired(true),
       ),
   )
   .addSubcommand((sub) =>
@@ -67,7 +75,15 @@ export const data = new SlashCommandBuilder()
       .setName("remove_deny_channel")
       .setDescription("拒否チャンネルから削除")
       .addChannelOption((opt) =>
-        opt.setName("channel").setDescription("対象チャンネル").addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true),
+        opt
+          .setName("channel")
+          .setDescription("対象チャンネル（テキスト / VC / ステージ）")
+          .addChannelTypes(
+            ChannelType.GuildText,
+            ChannelType.GuildVoice,
+            ChannelType.GuildStageVoice,
+          )
+          .setRequired(true),
       ),
   )
   .addSubcommand((sub) =>
