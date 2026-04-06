@@ -63,8 +63,12 @@ export const data = new SlashCommandBuilder()
   .addChannelOption((opt) =>
     opt
       .setName("channel")
-      .setDescription("監視チャンネル")
-      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+      .setDescription("監視チャンネル（テキスト / VC / ステージ）")
+      .addChannelTypes(
+        ChannelType.GuildText,
+        ChannelType.GuildVoice,
+        ChannelType.GuildStageVoice,
+      )
       .setRequired(true),
   )
   .addIntegerOption((opt) =>
@@ -204,4 +208,3 @@ export async function execute(interaction) {
     content: "✅ OBS オーバーレイのURLをDMで送信しました。",
   });
 }
-
