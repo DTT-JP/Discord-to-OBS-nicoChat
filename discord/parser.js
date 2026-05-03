@@ -248,12 +248,36 @@ function parseStickerParts(stickers) {
 // ─────────────────────────────────────────────
 
 export function countChars(parts) {
-  return parts.reduce((acc, part) => {
-    if (part.type === "text")    return acc + [...part.content.replace(/\n/g, "")].length;
-    if (part.type === "emoji")   return acc + 1;
-    if (part.type === "sticker") return acc + 10;
-    return acc;
-  }, 0);
+  let currentLine = 0;
+  let maxLine = 0;
+
+  const flushLine = () => {
+    if (currentLine > maxLine) maxLine = currentLine;
+  };
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      const segments = part.content.split("\n");
+      for (let i = 0; i < segments.length; i++) {
+        currentLine += [...segments[i]].length;
+        if (i < segments.length - 1) {
+          flushLine();
+          currentLine = 0;
+        }
+      }
+      continue;
+    }
+    if (part.type === "emoji") {
+      currentLine += 1;
+      continue;
+    }
+    if (part.type === "sticker") {
+      currentLine += 1;
+    }
+  }
+
+  flushLine();
+  return maxLine;
 }
 
 // ─────────────────────────────────────────────
