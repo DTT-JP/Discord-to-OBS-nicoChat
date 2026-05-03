@@ -261,7 +261,7 @@
 
     const sizePx    = vhToPx(SIZE_CONFIG[sizeKey].vh);
     const emojiPx   = sizePx;
-    const stickerPx = sizePx * 2;
+    const stickerPx = sizePx;
 
     const hasGaming = sessionEffects.has("gaming") || (payload.sessionFx?.includes("gaming") ?? false);
     const isItalic  = payload.styles?.italic ?? false;
@@ -329,18 +329,45 @@
           row.appendChild(img);
 
         } else if (part.type === "sticker") {
-          const img               = document.createElement("img");
-          img.className           = "sticker";
-          img.src                 = part.content;
-          img.alt                 = "";
-          img.loading             = "lazy";
-          img.style.height        = `${stickerPx}px`;
-          img.style.width         = "auto";
-          img.style.verticalAlign = "middle";
-          img.style.display       = "inline-block";
-          img.style.fontStyle     = "normal";
-          img.style.transform     = "none";
-          row.appendChild(img);
+          if (part.stickerFormat === "lottie" && window.bodymovin) {
+            const lottie = document.createElement("span");
+            lottie.className = "sticker sticker-lottie";
+            lottie.style.height = `${stickerPx}px`;
+            lottie.style.width = `${stickerPx}px`;
+            lottie.style.display = "inline-block";
+            lottie.style.verticalAlign = "middle";
+            row.appendChild(lottie);
+
+            requestAnimationFrame(() => {
+              window.bodymovin.loadAnimation({
+                container: lottie,
+                renderer: "svg",
+                loop: true,
+                autoplay: true,
+                path: part.content,
+              });
+            });
+          } else {
+            const img               = document.createElement("img");
+            img.className           = "sticker";
+            img.alt                 = "";
+            img.loading             = "lazy";
+            img.style.height        = `${stickerPx}px`;
+            img.style.width         = "auto";
+            img.style.verticalAlign = "middle";
+            img.style.display       = "inline-block";
+            img.style.fontStyle     = "normal";
+            img.style.transform     = "none";
+
+            // クラッシュGIF対策: GIFスタンプは静止プレビューPNGを使う
+            if (part.stickerFormat === "gif" && part.stickerId) {
+              img.src = `https://media.discordapp.net/stickers/${part.stickerId}.png?size=160`;
+            } else {
+              img.src = part.content;
+            }
+
+            row.appendChild(img);
+          }
         }
       }
 

@@ -220,11 +220,24 @@ function parseTextSegments(text) {
 function parseStickerParts(stickers) {
   const parts = [];
   for (const sticker of stickers.values()) {
-    if (sticker.format === StickerFormatType.Lottie) continue;
-    const ext = sticker.format === StickerFormatType.GIF ? "gif" : "webp";
+    let format = "png";
+    let ext = "png";
+    if (sticker.format === StickerFormatType.APNG) {
+      format = "apng";
+      ext = "png";
+    } else if (sticker.format === StickerFormatType.GIF) {
+      format = "gif";
+      ext = "gif";
+    } else if (sticker.format === StickerFormatType.Lottie) {
+      format = "lottie";
+      ext = "json";
+    }
+
     parts.push({
-      type:    "sticker",
-      content: `https://cdn.discordapp.com/stickers/${sticker.id}.${ext}?size=320`,
+      type:         "sticker",
+      stickerId:    sticker.id,
+      stickerFormat: format,
+      content:      `https://cdn.discordapp.com/stickers/${sticker.id}.${ext}?size=320`,
     });
   }
   return parts;
