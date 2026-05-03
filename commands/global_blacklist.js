@@ -19,6 +19,7 @@ function isBotOwner(interaction) {
 }
 
 export const data = new SlashCommandBuilder()
+  .setDefaultMemberPermissions(0)
   .setName("global_blacklist")
   .setDescription("グローバルブラックリストを管理します")
   .addSubcommand((sub) =>

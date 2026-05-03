@@ -50,7 +50,8 @@ export async function execute(interaction) {
     });
   }
 
-  const targetSessions = sessions.filter((s) => s.user_id === interaction.user.id || !!s.secret_allowed);
+  const isOwner = !!process.env.BOT_OWNER_ID?.trim() && process.env.BOT_OWNER_ID.trim() === interaction.user.id;
+  const targetSessions = isOwner ? sessions : sessions.filter((s) => s.user_id === interaction.user.id || !!s.secret_allowed);
   if (targetSessions.length === 0) {
     return interaction.editReply({
       content: "❌ このチャンネルではこのコマンドを使用できません。",
