@@ -42,6 +42,7 @@ function buildGuildDm(guildName, entry) {
 }
 
 export const data = new SlashCommandBuilder()
+  .setDefaultMemberPermissions(0)
   .setName("global_guild_blacklist")
   .setDescription("グローバルギルドブラックリストを管理します（Bot管理者のみ）")
   .addSubcommand((sub) =>
