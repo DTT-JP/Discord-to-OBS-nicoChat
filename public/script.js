@@ -454,7 +454,8 @@
     requestAnimationFrame(() => {
       const { W, H } = getScreenSize();
       const elW      = el.offsetWidth;
-      const elH      = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
+      const rawH     = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
+      const elH      = applyVerticalFitScale(el, "ue", rawH);
 
       const minY = 0;
       const maxY = Math.max(0, H - elH);
@@ -519,6 +520,23 @@
     }
   }
 
+
+  function getAdaptiveScaleForFixed(elH) {
+    const { H } = getScreenSize();
+    if (elH <= 0 || H <= 0) return 1;
+    return Math.min(1, H / elH);
+  }
+
+  function applyVerticalFitScale(el, side, rawH) {
+    const scale = getAdaptiveScaleForFixed(rawH);
+    if (scale < 1) {
+      el.style.transformOrigin = side === "shita" ? "bottom center" : "top center";
+      el.style.transform = `scale(${scale})`;
+      return rawH * scale;
+    }
+    return rawH;
+  }
+
   function renderFixed(payload) {
     const side  = payload.position;
     const slots = fixedSlots[side];
@@ -551,8 +569,27 @@
     stage.appendChild(el);
 
     requestAnimationFrame(() => {
-      const elH = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
-      const pos = calcFixedPosition(side, slotIndex, elH);
+      const { H } = getScreenSize();
+      const rawH = el.offsetHeight || vhToPx(SIZE_CONFIG[payload.size ?? "medium"].vh) * 1.4;
+      let effectiveH = rawH;
+      let pos = calcFixedPosition(side, slotIndex, effectiveH);
+
+      const wouldOverflowRemaining = pos.value + effectiveH > H;
+      if (wouldOverflowRemaining) {
+        if (side === "ue") {
+          pos = { prop: "top", value: 0 };
+        } else {
+          pos = { prop: "bottom", value: 0 };
+        }
+      }
+
+      const wouldOverflowWholeScreen = pos.value + effectiveH > H;
+      if (wouldOverflowWholeScreen) {
+        effectiveH = applyVerticalFitScale(el, side, rawH);
+        pos = side === "ue"
+          ? { prop: "top", value: 0 }
+          : { prop: "bottom", value: 0 };
+      }
 
       if (pos.prop === "top") {
         el.style.top    = `${pos.value}px`;
@@ -564,7 +601,7 @@
 
       el.style.visibility = "visible";
 
-      const entry = { el, height: elH, timerId: null };
+      const entry = { el, height: effectiveH, timerId: null };
       slots[slotIndex] = entry;
 
       entry.timerId = setTimeout(() => {
