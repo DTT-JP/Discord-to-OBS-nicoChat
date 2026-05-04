@@ -472,7 +472,7 @@
       if (hasReverse) {
         el.style.left = `-${elW}px`;
         const anim = el.animate(
-          [{ transform: "translateX(0)" }, { transform: `translateX(${distance}px)` }],
+          [{ transform: `translateX(0) scale(${el.style.getPropertyValue("--fit-scale") || "1"})` }, { transform: `translateX(${distance}px) scale(${el.style.getPropertyValue("--fit-scale") || "1"})` }],
           { duration: duration * 1000, easing: "linear", fill: "forwards" },
         );
         anim.onfinish = () => { el.remove(); flowCount--; };
@@ -530,9 +530,16 @@
   function applyVerticalFitScale(el, side, rawH) {
     const scale = getAdaptiveScaleForFixed(rawH);
     if (scale < 1) {
-      el.style.transformOrigin = side === "shita" ? "bottom center" : "top center";
-      el.style.transform = `scale(${scale})`;
+      el.style.setProperty("--fit-scale", String(scale));
+      if (el.classList.contains("comment-fixed")) {
+        el.style.transformOrigin = side === "shita" ? "bottom center" : "top center";
+        el.style.transform = `translateX(-50%) scale(${scale})`;
+      }
       return rawH * scale;
+    }
+    el.style.setProperty("--fit-scale", "1");
+    if (el.classList.contains("comment-fixed")) {
+      el.style.transform = "translateX(-50%)";
     }
     return rawH;
   }

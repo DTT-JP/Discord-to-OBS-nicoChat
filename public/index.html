@@ -140,14 +140,14 @@
 
     /* ── flow アニメーション ── */
     @keyframes flow {
-      from { transform: translateX(0); }
-      to   { transform: translateX(calc(-1 * var(--distance, 200vw))); }
+      from { transform: translateX(0) scale(var(--fit-scale, 1)); }
+      to   { transform: translateX(calc(-1 * var(--distance, 200vw))) scale(var(--fit-scale, 1)); }
     }
 
     /* ── loop アニメーション ── */
     @keyframes flow-loop {
-      from { transform: translateX(0); }
-      to   { transform: translateX(calc(-1 * var(--distance, 200vw))); }
+      from { transform: translateX(0) scale(var(--fit-scale, 1)); }
+      to   { transform: translateX(calc(-1 * var(--distance, 200vw))) scale(var(--fit-scale, 1)); }
     }
 
     .effect-loop {
