@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB, ActiveSessionDB } from "../database.js";
-import { KNOWN_SECRET_EFFECTS } from "../utils/secretEffects.js";
+import { KNOWN_SECRET_EFFECTS, SECRET_EFFECT_CHOICES } from "../utils/secretEffects.js";
 import { applySecretToSockets } from "../utils/secretTransport.js";
 
 export const data = new SlashCommandBuilder()
@@ -11,6 +11,7 @@ export const data = new SlashCommandBuilder()
       .setName("effect")
       .setDescription("エフェクト名")
       .setRequired(true)
+      .addChoices(...SECRET_EFFECT_CHOICES),
   )
   .addBooleanOption((opt) =>
     opt
