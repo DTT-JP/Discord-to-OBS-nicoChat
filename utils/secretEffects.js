@@ -23,3 +23,23 @@ export const SECRET_EFFECTS = [
 export const KNOWN_SECRET_EFFECTS = new Set(SECRET_EFFECTS.map((effect) => effect.value));
 
 export const SECRET_EFFECT_CHOICES = SECRET_EFFECTS.map(({ name, value }) => ({ name, value }));
+
+export const SECRET_EFFECT_VALUES_TEXT = SECRET_EFFECTS.map((effect) => effect.value).join(", ");
+
+export function normalizeSecretEffect(effectRaw) {
+  return String(effectRaw ?? "").trim().toLowerCase();
+}
+
+export function validateSecretEffect(effectRaw) {
+  const effect = normalizeSecretEffect(effectRaw);
+
+  if (!KNOWN_SECRET_EFFECTS.has(effect)) {
+    return {
+      ok: false,
+      effect,
+      message: `❌ 未対応のエフェクトです。利用可能: ${SECRET_EFFECT_VALUES_TEXT}`,
+    };
+  }
+
+  return { ok: true, effect };
+}

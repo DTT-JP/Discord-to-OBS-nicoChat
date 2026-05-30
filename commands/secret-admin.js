@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { ActiveSessionDB } from "../database.js";
-import { KNOWN_SECRET_EFFECTS, SECRET_EFFECT_CHOICES } from "../utils/secretEffects.js";
+import { SECRET_EFFECT_CHOICES, validateSecretEffect } from "../utils/secretEffects.js";
 import { applySecretToSockets } from "../utils/secretTransport.js";
 
 const MODE_ENABLE = "enable";
@@ -45,15 +45,17 @@ export async function execute(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const sessionId = interaction.options.getString("session_id", true).trim();
-  const effect = interaction.options.getString("effect", true).trim().toLowerCase();
+  const effectRaw = interaction.options.getString("effect", true);
   const mode = interaction.options.getString("mode", true);
   const value = mode === MODE_ENABLE;
 
-  if (!KNOWN_SECRET_EFFECTS.has(effect)) {
+  const effectValidation = validateSecretEffect(effectRaw);
+  if (!effectValidation.ok) {
     return interaction.editReply({
-      content: `❌ 未対応のエフェクトです: ${effect}`,
+      content: effectValidation.message,
     });
   }
+  const effect = effectValidation.effect;
 
   const session = ActiveSessionDB.findBySessionId(sessionId);
   if (!session) {
