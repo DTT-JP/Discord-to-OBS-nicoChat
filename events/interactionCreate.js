@@ -78,7 +78,8 @@ export async function execute(interaction, client) {
   const isMyStatusCheck = interaction.commandName === "my-status";
   const isSecretByOwner = interaction.commandName === "secret" && isBotOwnerUser;
   const isSessionAdminByOwner = interaction.commandName === "session-admin" && isBotOwnerUser;
-  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck && !isSecretByOwner && !isSessionAdminByOwner) {
+  const isSecretAdminByOwner = interaction.commandName === "secret-admin" && isBotOwnerUser;
+  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck && !isSecretByOwner && !isSessionAdminByOwner && !isSecretAdminByOwner) {
     return interaction.reply({
       content: "このBotを利用する権限がありません。",
       flags: MessageFlags.Ephemeral,
