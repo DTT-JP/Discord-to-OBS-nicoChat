@@ -70,13 +70,36 @@ function isAllowedImageUrl(urlStr) {
     if (url.protocol !== "https:") return false;
     // 許可ホストのみ
     if (!ALLOWED_IMAGE_HOSTS.has(url.hostname)) return false;
-    // 拡張子チェック（クエリ除去してチェック）
+    // 拡張子チェック（pathname のみ使用し、クエリパラメータを除外する）
+    // pathname 例: /attachments/123/456/image.png
     const pathname = url.pathname.toLowerCase();
-    const ext = pathname.split(".").pop();
+    // pathname の末尾セグメントから拡張子を取得
+    const lastSegment = pathname.split("/").pop() || "";
+    const dotIndex = lastSegment.lastIndexOf(".");
+    if (dotIndex === -1) return false;
+    const ext = lastSegment.slice(dotIndex + 1);
     if (!ext || !ALLOWED_IMAGE_EXTS.has(ext)) return false;
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * URLから拡張子を取得する（クエリパラメータを除外）
+ * @param {string} urlStr
+ * @returns {string}
+ */
+function getExtFromUrl(urlStr) {
+  try {
+    const url = new URL(urlStr);
+    const pathname = url.pathname.toLowerCase();
+    const lastSegment = pathname.split("/").pop() || "";
+    const dotIndex = lastSegment.lastIndexOf(".");
+    if (dotIndex === -1) return "";
+    return lastSegment.slice(dotIndex + 1);
+  } catch {
+    return "";
   }
 }
 
@@ -159,17 +182,66 @@ function extractInlineStyles(text) {
 // ─────────────────────────────────────────────
 
 /**
- * テキストをテキスト・絵文字・メンションに分割する
+ * テキスト中の Discord CDN 画像URLを検出して attachment パーツに変換する。
+ * クエリパラメータ（?ex=...&format=webp 等）は拡張子判定に使用しない。
+ * URLそのものはそのまま img.src に渡すため、クエリ付きでも正しく読み込まれる。
+ * @param {string} seg - テキストセグメント
+ * @returns {Array} text / attachment パーツの配列
+ */
+function splitTextWithImageUrls(seg) {
+  // Discord CDN ホストの https:// URL を検出する正規表現
+  // URL 末尾の判定: 空白・改行・< で終わり、またはテキスト末尾
+  const RE_DISCORD_URL = /https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net|images-ext-1\.discordapp\.net|images-ext-2\.discordapp\.net)\/\S+/g;
+
+  const result = [];
+  let last = 0;
+  let m;
+
+  RE_DISCORD_URL.lastIndex = 0;
+  while ((m = RE_DISCORD_URL.exec(seg)) !== null) {
+    // URL より前のテキストを追加
+    if (m.index > last) {
+      const before = seg.slice(last, m.index);
+      if (before) result.push({ type: "text", content: before });
+    }
+
+    const rawUrl = m[0];
+    // pathname から拡張子を取得（クエリパラメータを除外）
+    const ext = getExtFromUrl(rawUrl);
+    if (ALLOWED_IMAGE_EXTS.has(ext)) {
+      // 許可された画像拡張子 → attachment パーツとして追加
+      const isGif = ext === "gif";
+      result.push({ type: "attachment", content: rawUrl, isGif, width: null, height: null });
+    } else {
+      // 拡張子が画像でない（または不明）→ テキストとしてそのまま残す
+      result.push({ type: "text", content: rawUrl });
+    }
+
+    last = RE_DISCORD_URL.lastIndex;
+  }
+
+  RE_DISCORD_URL.lastIndex = 0;
+
+  // URL より後のテキストを追加
+  if (last < seg.length) {
+    const after = seg.slice(last);
+    if (after) result.push({ type: "text", content: after });
+  }
+
+  return result.length > 0 ? result : [{ type: "text", content: seg }];
+}
+
+/**
+ * テキストをテキスト・絵文字・メンション・Discord CDN画像URLに分割する
  * @param {string} text
  * @param {Map<string, string|null>} mentionColorMap - userId -> roleColor (hex or null)
  * @returns {Array}
  */
 function parseTextSegments(text, mentionColorMap = new Map()) {
-  // まず絵文字とメンションを混在させて分割する
-  // 両方の正規表現を統合して処理する
+  // 絵文字・メンションを先に分割し、残ったテキストセグメントをさらに画像URLで分割する
   const RE_EMOJI_OR_MENTION = /<(a?):([^:]+):(\d+)>|<@!?(\d+)>/g;
 
-  const parts = [];
+  const rawParts = [];
   let lastIndex = 0;
   let match;
 
@@ -178,14 +250,14 @@ function parseTextSegments(text, mentionColorMap = new Map()) {
   while ((match = RE_EMOJI_OR_MENTION.exec(text)) !== null) {
     if (match.index > lastIndex) {
       const seg = text.slice(lastIndex, match.index);
-      if (seg) parts.push({ type: "text", content: seg });
+      if (seg) rawParts.push({ type: "text", content: seg });
     }
 
     if (match[3] !== undefined) {
       // カスタム絵文字: <(a?):name:id>
       const animated = match[1] === "a";
       const id       = match[3];
-      parts.push({
+      rawParts.push({
         type:    "emoji",
         content: `https://cdn.discordapp.com/emojis/${id}.${animated ? "gif" : "webp"}?size=64`,
       });
@@ -193,11 +265,11 @@ function parseTextSegments(text, mentionColorMap = new Map()) {
       // メンション: <@userId> or <@!userId>
       const userId = match[4];
       const roleColor = mentionColorMap.get(userId) ?? null;
-      parts.push({
+      rawParts.push({
         type:      "mention",
         userId,
-        roleColor, // hex string or null
-        content:   `@${userId}`, // フォールバック表示テキスト
+        roleColor,
+        content:   `@${userId}`,
       });
     }
 
@@ -208,7 +280,17 @@ function parseTextSegments(text, mentionColorMap = new Map()) {
 
   if (lastIndex < text.length) {
     const seg = text.slice(lastIndex);
-    if (seg) parts.push({ type: "text", content: seg });
+    if (seg) rawParts.push({ type: "text", content: seg });
+  }
+
+  // text パーツをさらに Discord CDN 画像URLで分割する
+  const parts = [];
+  for (const part of rawParts) {
+    if (part.type === "text") {
+      parts.push(...splitTextWithImageUrls(part.content));
+    } else {
+      parts.push(part);
+    }
   }
 
   return parts;
@@ -256,18 +338,48 @@ function parseAttachmentParts(attachments) {
     const url = attachment.url;
     if (!isAllowedImageUrl(url)) continue;
 
-    // 拡張子を取得（GIF判定用）
-    const pathname = new URL(url).pathname.toLowerCase();
-    const ext = pathname.split(".").pop();
+    // クエリパラメータを除外した pathname から拡張子を取得
+    const ext = getExtFromUrl(url);
     const isGif = ext === "gif";
 
     parts.push({
       type:    "attachment",
       content: url,
-      isGif,   // trueならCanvas静止化が必要
+      isGif,
       width:   attachment.width  ?? null,
       height:  attachment.height ?? null,
     });
+  }
+  return parts;
+}
+
+// ─────────────────────────────────────────────
+// Discord embed 画像パーツ
+// ─────────────────────────────────────────────
+
+/**
+ * message.embeds から画像（image / thumbnail）を抽出する。
+ * Discord チャット上で画像URLをテキストとして貼り付けると
+ * embeds[].image.url に格納される。
+ * @param {import("discord.js").Collection | Array} embeds
+ * @returns {Array}
+ */
+function parseEmbedImageParts(embeds) {
+  const parts = [];
+  for (const embed of embeds) {
+    // embed.image: { url, proxyURL, width, height }
+    const imgUrl = embed.image?.url ?? embed.image?.proxyURL ?? null;
+    if (imgUrl && isAllowedImageUrl(imgUrl)) {
+      const ext = getExtFromUrl(imgUrl);
+      const isGif = ext === "gif";
+      parts.push({
+        type:    "attachment",
+        content: imgUrl,
+        isGif,
+        width:   embed.image?.width  ?? null,
+        height:  embed.image?.height ?? null,
+      });
+    }
   }
   return parts;
 }
@@ -381,6 +493,30 @@ export function parseMessage(message, watchChannelIds, options = {}) {
 
   // ── テキストメッセージ ────────────────────────
   const rawContent = message.content;
+
+  // テキストなし・添付なし・embedのみ（画像URL貼り付け等）の場合
+  if (!rawContent.trim() && message.embeds.length > 0) {
+    const parts = parseEmbedImageParts(message.embeds);
+    if (parts.length === 0) return null;
+    return {
+      t:                   message.createdTimestamp,
+      a:                   message.member?.displayName ?? message.author.username,
+      av:                  message.author.displayAvatarURL({ size: 64, extension: "webp" }),
+      color:               null,
+      size:                "medium",
+      font:                null,
+      position:            null,
+      sessionFx:           [],
+      msgCommands:         [],
+      styles:              { bold: false, italic: false, underline: false, strikethrough: false },
+      p:                   parts,
+      charCount:           countChars(parts),
+      isAdmin,
+      mentionsSessionOwner,
+      layer:               isAdmin ? "admin" : mentionsSessionOwner ? "priority" : "normal",
+    };
+  }
+
   if (!rawContent.trim()) return null;
 
   // ① メタブロック解析
@@ -409,6 +545,12 @@ export function parseMessage(message, watchChannelIds, options = {}) {
     parts.push(...attachParts);
   }
 
+  // ⑥ テキストメッセージに embed 画像が付いている場合（例: テキスト + URL貼り付け）
+  if (message.embeds.length > 0) {
+    const embedParts = parseEmbedImageParts(message.embeds);
+    parts.push(...embedParts);
+  }
+
   if (parts.length === 0) return null;
 
   // レイヤー決定
@@ -431,6 +573,6 @@ export function parseMessage(message, watchChannelIds, options = {}) {
     charCount:           countChars(parts),
     isAdmin,
     mentionsSessionOwner,
-    layer,               // "admin" | "priority" | "normal"
+    layer,
   };
 }

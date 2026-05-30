@@ -140,11 +140,14 @@
   /**
    * テキスト色（hex）に対して適切な縁取り色を返す。
    * 明度が高い（明るい色）→ 黒縁、暗い色 → 白縁。
+   * colorHex が null（メタデータ未指定 = デフォルト白）の場合も
+   * #ffffff として計算するため、白文字には必ず黒縁が付く。
    * @param {string|null} colorHex - "#RRGGBB" or null
    * @returns {string} CSSカラー文字列
    */
   function calcOutlineColor(colorHex) {
-    if (!colorHex) return "rgba(0,0,0,0.92)";
+    // null（デフォルト白）の場合は #ffffff として計算
+    if (!colorHex) colorHex = "#ffffff";
     const hex = colorHex.replace("#", "");
     let r, g, b;
     if (hex.length === 3) {
@@ -158,7 +161,7 @@
     }
     // 相対輝度（sRGB輝度近似）
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    // 明るい色（luminance > 0.5）→ 黒縁、暗い色 → 白縁（不透明度を高くして視認性確保）
+    // 明るい色（luminance > 0.5）→ 黒縁、暗い色 → 白縁
     return luminance > 0.5 ? "rgba(0,0,0,0.92)" : "rgba(255,255,255,0.90)";
   }
 
@@ -204,7 +207,6 @@
       img.onload = () => {
         let w = img.naturalWidth  || maxSize;
         let h = img.naturalHeight || maxSize;
-        // アスペクト比を保ちながらmaxSize以内に収める
         if (w > maxSize || h > maxSize) {
           const ratio = Math.min(maxSize / w, maxSize / h);
           w = Math.round(w * ratio);
@@ -364,13 +366,13 @@
     const fontFamily = payload.font === "mincho" ? FONT_MINCHO : FONT_GOTHIC;
 
     // テキスト色と縁取り色を決定
+    // payload.color が null（メタデータ未指定）の場合はデフォルト白 #ffffff として扱う
+    // 白(輝度高) → 黒縁、暗い色(輝度低) → 白縁
     const textColor    = payload.color || "#ffffff";
-    const outlineColor = calcOutlineColor(textColor);
+    const outlineColor = calcOutlineColor(payload.color);  // null のときも正しく計算される
     const textShadow   = buildTextShadow(outlineColor);
 
     // 管理者コメント・セッション主メンションの縁取り強調色
-    // 管理者: 金色の縁取り追加
-    // セッション主メンション: 黄色の縁取り追加
     let extraShadow = "";
     if (payload.isAdmin) {
       extraShadow = ", 0 0 8px rgba(255,200,0,0.9), 0 0 16px rgba(255,200,0,0.5)";
@@ -435,14 +437,11 @@
           span.style.whiteSpace = "pre";
           span.style.fontFamily = fontFamily;
 
-          // メンション表示テキスト（後で実際のユーザー名に置き換えても良い）
           span.textContent = part.content;
 
-          // ロール色がある場合はその色で、なければデフォルト色
+          // ロール色がある場合はその色で縁取りも計算、なければデフォルトと同じ
           const mentionTextColor  = part.roleColor || textColor;
-          const mentionOutline    = part.roleColor
-            ? calcOutlineColor(part.roleColor)
-            : outlineColor;
+          const mentionOutline    = calcOutlineColor(part.roleColor || payload.color);
           const mentionShadow     = buildTextShadow(mentionOutline);
 
           if (!hasGaming) {
@@ -456,7 +455,7 @@
 
           row.appendChild(span);
 
-        // ── カスタム絵文字パーツ（現行と同じ） ──
+        // ── カスタム絵文字パーツ ──
         } else if (part.type === "emoji") {
           const img               = document.createElement("img");
           img.className           = "emoji";
@@ -471,7 +470,7 @@
           img.style.transform     = "none";
           row.appendChild(img);
 
-        // ── スタンプパーツ（現行と同じ） ──
+        // ── スタンプパーツ ──
         } else if (part.type === "sticker") {
           if (part.stickerFormat === "lottie" && window.bodymovin) {
             const lottie = document.createElement("span");
@@ -521,7 +520,6 @@
               row.appendChild(canvas);
             } catch (e) {
               console.warn("[overlay] GIF静止化失敗:", e.message);
-              // フォールバック: 通常のimgとして表示（静止しない）
               const img = document.createElement("img");
               img.src               = part.content;
               img.alt               = "";
@@ -625,7 +623,6 @@
     el.style.visibility = "hidden";
     el.style.zIndex     = String(resolveZIndex(payload, false));
 
-    // 管理者コメントに視覚マーカー
     if (payload.isAdmin) el.classList.add("comment-admin");
 
     el.appendChild(await buildParts(payload, false));
@@ -768,7 +765,6 @@
     const el            = document.createElement("div");
     el.className        = "comment-fixed";
     el.style.visibility = "hidden";
-    // 固定コメントのz-index（管理者は最前面）
     el.style.zIndex     = String(resolveZIndex(payload, true));
 
     if (payload.isAdmin) el.classList.add("comment-admin");
