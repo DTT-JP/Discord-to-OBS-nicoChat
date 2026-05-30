@@ -5,37 +5,31 @@
   // 設定
   // ────────────────────────────────────────────────
 
-  let MAX_FLOW_COMMENTS = 30;       // auth_success で上書き
-  const FIXED_DISPLAY_MS  = 4000;  // 上下固定の表示時間（ms）
+  let MAX_FLOW_COMMENTS = 30;
+  const FIXED_DISPLAY_MS  = 4000;
 
-  // ── 速度設定（横流れ） ───────────────────────────
-  // 画面幅 / DIVISOR = px/秒
-  // 4秒基準: 短いコメントは divisor=4.0 (W px / (W/4s) = 4s)
-  //          長いコメントは divisor=6.0 (少し遅め)
-  const SPEED_DIVISOR_MIN = 4.0;  // 短いコメント（文字数 >= CHAR_THRESHOLD）
-  const SPEED_DIVISOR_MAX = 6.0;  // 長いコメント（文字数 <= 0）
+  const SPEED_DIVISOR_MIN = 4.0;
+  const SPEED_DIVISOR_MAX = 6.0;
   const CHAR_THRESHOLD    = 30;
 
-  // ── サイズ設定 ───────────────────────────────────
-  // medium: 約12行収まる → 画面高さ / (fontSize * lineHeight * 12) ≈ 1
-  //   fontSize = vh * H/100, lineHeight = 1.3
-  //   12行 * 1.3 * (vh/100 * H) <= H → vh <= 100/(12*1.3) ≈ 6.41vh → 6vh
-  // small: 約21行収まる → 100/(21*1.3) ≈ 3.66vh → 3.5vh
-  // big: 大きめ表示
   const SIZE_CONFIG = {
-    big:    { vh: 10 },    // 約7行が縮小なしの目安
-    medium: { vh:  6 },    // 約12行が縮小なしの目安
-    small:  { vh:  3.5 },  // 約21行が縮小なしの目安
+    big:    { vh: 10 },
+    medium: { vh:  6 },
+    small:  { vh:  3.5 },
   };
 
-  // セッション単位の表示制御
-  const sessionEffects = new Set();
+  // z-index レイヤー定義
+  const LAYER_Z = {
+    normal:   100,
+    priority: 200,  // セッション主へのメンション
+    fixed:    300,  // ue/shita 固定コメント
+    admin:    400,  // 管理者コメント（最前面）
+  };
 
-  // 衝突判定用
+  const sessionEffects = new Set();
   const activeRects = [];
   const RECT_MARGIN = 4;
 
-  // 固定スロット
   const FIXED_MAX_SLOTS = 20;
   const fixedSlots = {
     ue:    new Array(FIXED_MAX_SLOTS).fill(null),
@@ -56,7 +50,6 @@
   function getScreenSize() {
     let W = window.innerWidth;
     let H = window.innerHeight;
-
     if (!W || !H) {
       const r = stage.getBoundingClientRect();
       W = r.width  || document.documentElement.clientWidth  || 1920;
@@ -76,9 +69,7 @@
 
   const urlToken = new URLSearchParams(location.search).get("token");
   let resumeStored = null;
-  try {
-    resumeStored = sessionStorage.getItem(RESUME_STORAGE_KEY);
-  } catch (_) { /* ストレージ不可 */ }
+  try { resumeStored = sessionStorage.getItem(RESUME_STORAGE_KEY); } catch (_) {}
 
   const socketQuery = (urlToken && UUID_RE.test(urlToken))
     ? { token: urlToken }
@@ -92,16 +83,12 @@
 
   function hexToBytes(hex) {
     const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    }
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
     return bytes;
   }
 
   async function importKey(keyHex) {
-    return crypto.subtle.importKey(
-      "raw", hexToBytes(keyHex), { name: "AES-GCM" }, false, ["decrypt"],
-    );
+    return crypto.subtle.importKey("raw", hexToBytes(keyHex), { name: "AES-GCM" }, false, ["decrypt"]);
   }
 
   async function decryptPayload(raw, key) {
@@ -112,9 +99,7 @@
     const combined = new Uint8Array(ct.length + tag.length);
     combined.set(ct, 0);
     combined.set(tag, ct.length);
-    const dec = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv, tagLength: 128 }, key, combined,
-    );
+    const dec = await crypto.subtle.decrypt({ name: "AES-GCM", iv, tagLength: 128 }, key, combined);
     return JSON.parse(new TextDecoder().decode(dec));
   }
 
@@ -141,15 +126,90 @@
     return Math.round(H * vh / 100);
   }
 
-  /** 速度計算（px/秒） */
   function calcSpeed(charCount) {
     const { W } = getScreenSize();
-    // charCount が少ないほど divisor が小さく（速く）、多いほど大きく（遅く）なる
-    // CHAR_THRESHOLD 以上で divisor = SPEED_DIVISOR_MIN (速め)
-    // 0 で divisor = SPEED_DIVISOR_MAX (遅め)
     const r       = Math.min(charCount, CHAR_THRESHOLD) / CHAR_THRESHOLD;
     const divisor = SPEED_DIVISOR_MIN + (SPEED_DIVISOR_MAX - SPEED_DIVISOR_MIN) * (1 - r);
     return W / divisor;
+  }
+
+  // ────────────────────────────────────────────────
+  // 縁取り色の自動決定
+  // ────────────────────────────────────────────────
+
+  /**
+   * テキスト色（hex）に対して適切な縁取り色を返す。
+   * 明度が高い（明るい色）→ 黒縁、暗い色 → 白縁。
+   * @param {string|null} colorHex - "#RRGGBB" or null
+   * @returns {string} CSSカラー文字列
+   */
+  function calcOutlineColor(colorHex) {
+    if (!colorHex) return "rgba(0,0,0,0.9)";
+    const hex = colorHex.replace("#", "");
+    let r, g, b;
+    if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+    } else {
+      r = parseInt(hex.slice(0, 2), 16);
+      g = parseInt(hex.slice(2, 4), 16);
+      b = parseInt(hex.slice(4, 6), 16);
+    }
+    // 相対輝度（sRGB輝度近似）
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    // 明るい色（luminance > 0.5）→ 黒縁
+    return luminance > 0.5 ? "rgba(0,0,0,0.92)" : "rgba(255,255,255,0.25)";
+  }
+
+  /**
+   * テキストシャドウスタイル文字列を生成する。
+   * @param {string} outlineColor
+   * @returns {string}
+   */
+  function buildTextShadow(outlineColor) {
+    return [
+      `-1px -1px 0 ${outlineColor}`,
+       `1px -1px 0 ${outlineColor}`,
+      `-1px  1px 0 ${outlineColor}`,
+       `1px  1px 0 ${outlineColor}`,
+       `0    2px 6px rgba(0,0,0,0.7)`,
+    ].join(", ");
+  }
+
+  // ────────────────────────────────────────────────
+  // GIF静止化（Canvas）
+  // ────────────────────────────────────────────────
+
+  /**
+   * GIF URLをCanvasに1フレームだけ描画して静止画として返す。
+   * @param {string} url
+   * @param {number} [maxSize=320]
+   * @returns {Promise<HTMLCanvasElement>}
+   */
+  function createStaticGifCanvas(url, maxSize = 320) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        let w = img.naturalWidth  || maxSize;
+        let h = img.naturalHeight || maxSize;
+        // アスペクト比を保ちながらmaxSize以内に収める
+        if (w > maxSize || h > maxSize) {
+          const ratio = Math.min(maxSize / w, maxSize / h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width  = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas);
+      };
+      img.onerror = () => reject(new Error(`GIF load failed: ${url}`));
+      img.src = url;
+    });
   }
 
   // ────────────────────────────────────────────────
@@ -165,7 +225,7 @@
 
   socket.on("auth_code", ({ code }) => {
     authCodeDisplay.textContent = String(code);
-    console.log("[overlay] 認証コードを表示しました（ログには値を出しません）");
+    console.log("[overlay] 認証コードを表示しました");
   });
 
   socket.on("auth_success", async ({ key, maxComments, resumeToken }) => {
@@ -174,26 +234,22 @@
       MAX_FLOW_COMMENTS = maxComments;
 
       if (typeof resumeToken === "string" && RESUME_RE.test(resumeToken)) {
-        try {
-          sessionStorage.setItem(RESUME_STORAGE_KEY, resumeToken);
-        } catch (_) { /* ignore */ }
+        try { sessionStorage.setItem(RESUME_STORAGE_KEY, resumeToken); } catch (_) {}
       }
 
-      // ── 認証コードをDOMから完全に削除 ──────────
       authCodeDisplay.textContent = "";
       const codeLabel = authScreen.querySelector("h1");
       if (codeLabel) codeLabel.remove();
       const codeDesc = authScreen.querySelector("p");
       if (codeDesc) codeDesc.remove();
       authCodeDisplay.style.display = "none";
-
       authScreen.style.display = "none";
 
       try {
         const path = location.pathname || "/";
         const next = `${path}${location.hash || ""}`;
         if (location.search) history.replaceState(null, "", next);
-      } catch (_) { /* ignore */ }
+      } catch (_) {}
 
       console.log("[overlay] 認証完了 maxComments=", maxComments);
     } catch (e) {
@@ -275,11 +331,15 @@
   // パーツ要素生成
   // ────────────────────────────────────────────────
 
-  function buildParts(payload, forFixed = false) {
-    const sizeKey = (payload.size && SIZE_CONFIG[payload.size])
-      ? payload.size
-      : "medium";
-
+  /**
+   * ペイロードからDOM要素を非同期で生成する。
+   * GIF添付画像はCanvasに変換して静止化する。
+   * @param {object} payload
+   * @param {boolean} [forFixed]
+   * @returns {Promise<DocumentFragment>}
+   */
+  async function buildParts(payload, forFixed = false) {
+    const sizeKey = (payload.size && SIZE_CONFIG[payload.size]) ? payload.size : "medium";
     const sizePx    = vhToPx(SIZE_CONFIG[sizeKey].vh);
     const emojiPx   = sizePx;
     const stickerPx = sizePx;
@@ -291,9 +351,25 @@
     if (payload.styles?.underline)     deco.push("underline");
     if (payload.styles?.strikethrough) deco.push("line-through");
 
-    // フォントファミリー決定（gothic / mincho、未指定はgothic）
     const fontFamily = payload.font === "mincho" ? FONT_MINCHO : FONT_GOTHIC;
 
+    // テキスト色と縁取り色を決定
+    const textColor    = payload.color || "#ffffff";
+    const outlineColor = calcOutlineColor(textColor);
+    const textShadow   = buildTextShadow(outlineColor);
+
+    // 管理者コメント・セッション主メンションの縁取り強調色
+    // 管理者: 金色の縁取り追加
+    // セッション主メンション: 黄色の縁取り追加
+    let extraShadow = "";
+    if (payload.isAdmin) {
+      extraShadow = ", 0 0 8px rgba(255,200,0,0.9), 0 0 16px rgba(255,200,0,0.5)";
+    } else if (payload.mentionsSessionOwner) {
+      extraShadow = ", 0 0 8px rgba(255,220,0,0.85), 0 0 14px rgba(255,220,0,0.4)";
+    }
+    const finalTextShadow = textShadow + extraShadow;
+
+    // テキストをパーツ単位に行分割する
     const lines = [[]];
     for (const part of payload.p) {
       if (part.type === "text") {
@@ -318,6 +394,7 @@
 
       for (const part of line) {
 
+        // ── テキストパーツ ──
         if (part.type === "text") {
           const span              = document.createElement("span");
           span.className          = "text-part";
@@ -325,13 +402,13 @@
           span.style.lineHeight   = "1.3";
           span.style.whiteSpace   = "pre";
           span.style.fontFamily   = fontFamily;
+          span.style.textShadow   = finalTextShadow;
 
           if (!hasGaming) {
-            const color = payload.color || "#ffffff";
-            span.style.setProperty("color", color, "important");
+            span.style.setProperty("color", textColor, "important");
           }
 
-          span.textContent        = part.content;
+          span.textContent = part.content;
 
           if (payload.styles?.bold)  span.style.fontWeight    = "bold";
           if (isItalic)              span.style.fontStyle      = "italic";
@@ -339,6 +416,37 @@
 
           row.appendChild(span);
 
+        // ── メンションパーツ ──
+        } else if (part.type === "mention") {
+          const span = document.createElement("span");
+          span.className = "text-part mention-part";
+          span.style.fontSize   = `${sizePx}px`;
+          span.style.lineHeight = "1.3";
+          span.style.whiteSpace = "pre";
+          span.style.fontFamily = fontFamily;
+
+          // メンション表示テキスト（後で実際のユーザー名に置き換えても良い）
+          span.textContent = part.content;
+
+          // ロール色がある場合はその色で、なければデフォルト色
+          const mentionTextColor  = part.roleColor || textColor;
+          const mentionOutline    = part.roleColor
+            ? calcOutlineColor(part.roleColor)
+            : outlineColor;
+          const mentionShadow     = buildTextShadow(mentionOutline);
+
+          if (!hasGaming) {
+            span.style.setProperty("color", mentionTextColor, "important");
+          }
+          span.style.textShadow = mentionShadow + extraShadow;
+
+          if (payload.styles?.bold)  span.style.fontWeight    = "bold";
+          if (isItalic)              span.style.fontStyle      = "italic";
+          if (deco.length > 0)       span.style.textDecoration = deco.join(" ");
+
+          row.appendChild(span);
+
+        // ── カスタム絵文字パーツ（現行と同じ） ──
         } else if (part.type === "emoji") {
           const img               = document.createElement("img");
           img.className           = "emoji";
@@ -353,23 +461,20 @@
           img.style.transform     = "none";
           row.appendChild(img);
 
+        // ── スタンプパーツ（現行と同じ） ──
         } else if (part.type === "sticker") {
           if (part.stickerFormat === "lottie" && window.bodymovin) {
             const lottie = document.createElement("span");
             lottie.className = "sticker sticker-lottie";
-            lottie.style.height = `${stickerPx}px`;
-            lottie.style.width = `${stickerPx}px`;
+            lottie.style.height  = `${stickerPx}px`;
+            lottie.style.width   = `${stickerPx}px`;
             lottie.style.display = "inline-block";
             lottie.style.verticalAlign = "middle";
             row.appendChild(lottie);
-
             requestAnimationFrame(() => {
               window.bodymovin.loadAnimation({
-                container: lottie,
-                renderer: "svg",
-                loop: true,
-                autoplay: true,
-                path: part.content,
+                container: lottie, renderer: "svg",
+                loop: true, autoplay: true, path: part.content,
               });
             });
           } else {
@@ -389,7 +494,47 @@
             } else {
               img.src = part.content;
             }
+            row.appendChild(img);
+          }
 
+        // ── 添付画像パーツ ──
+        } else if (part.type === "attachment") {
+          if (part.isGif) {
+            // GIFはCanvasで静止化
+            try {
+              const canvas = await createStaticGifCanvas(part.content, stickerPx * 4);
+              canvas.style.height        = `${stickerPx * 2}px`;
+              canvas.style.width         = "auto";
+              canvas.style.verticalAlign = "middle";
+              canvas.style.display       = "inline-block";
+              canvas.style.maxWidth      = "none";
+              row.appendChild(canvas);
+            } catch (e) {
+              console.warn("[overlay] GIF静止化失敗:", e.message);
+              // フォールバック: 通常のimgとして表示（静止しない）
+              const img = document.createElement("img");
+              img.src               = part.content;
+              img.alt               = "";
+              img.loading           = "lazy";
+              img.style.height      = `${stickerPx * 2}px`;
+              img.style.width       = "auto";
+              img.style.verticalAlign = "middle";
+              img.style.display     = "inline-block";
+              row.appendChild(img);
+            }
+          } else {
+            // 通常の静止画（PNG/JPG/WebP等）
+            const img               = document.createElement("img");
+            img.className           = "attachment-img";
+            img.alt                 = "";
+            img.loading             = "lazy";
+            img.crossOrigin         = "anonymous";
+            img.style.height        = `${stickerPx * 2}px`;
+            img.style.width         = "auto";
+            img.style.verticalAlign = "middle";
+            img.style.display       = "inline-block";
+            img.style.maxWidth      = "none";
+            img.src                 = part.content;
             row.appendChild(img);
           }
         }
@@ -413,18 +558,26 @@
   }
 
   // ────────────────────────────────────────────────
+  // z-index 決定
+  // ────────────────────────────────────────────────
+
+  function resolveZIndex(payload, isFixed = false) {
+    if (payload.isAdmin) return LAYER_Z.admin;
+    if (isFixed)         return LAYER_Z.fixed;
+    if (payload.mentionsSessionOwner) return LAYER_Z.priority;
+    return LAYER_Z.normal;
+  }
+
+  // ────────────────────────────────────────────────
   // 衝突判定
   // ────────────────────────────────────────────────
 
   function findFreeY(elH, minY, maxY) {
     const now = performance.now();
-
     for (let i = activeRects.length - 1; i >= 0; i--) {
       if (now > activeRects[i].expire) activeRects.splice(i, 1);
     }
-
     if (maxY <= minY) return minY;
-
     const range = maxY - minY;
 
     function overlapAt(y) {
@@ -440,19 +593,12 @@
 
     let bestY     = Math.floor(Math.random() * (range + 1)) + minY;
     let bestScore = Infinity;
-
     for (let i = 0; i < 20; i++) {
       const candidate = Math.floor(Math.random() * (range + 1)) + minY;
       const overlap   = overlapAt(candidate);
-
       if (overlap === 0) return candidate;
-
-      if (overlap < bestScore) {
-        bestScore = overlap;
-        bestY     = candidate;
-      }
+      if (overlap < bestScore) { bestScore = overlap; bestY = candidate; }
     }
-
     return Math.min(bestY, maxY);
   }
 
@@ -460,14 +606,19 @@
   // 流れるコメント
   // ────────────────────────────────────────────────
 
-  function renderFlow(payload) {
+  async function renderFlow(payload) {
     if (flowCount >= MAX_FLOW_COMMENTS) return;
 
     const el            = document.createElement("div");
     el.className        = "comment";
     el.style.animation  = "none";
     el.style.visibility = "hidden";
-    el.appendChild(buildParts(payload, false));
+    el.style.zIndex     = String(resolveZIndex(payload, false));
+
+    // 管理者コメントに視覚マーカー
+    if (payload.isAdmin) el.classList.add("comment-admin");
+
+    el.appendChild(await buildParts(payload, false));
 
     const hasReverse = sessionEffects.has("reverse") || (payload.sessionFx?.includes("reverse") ?? false);
 
@@ -514,7 +665,6 @@
       }
 
       applyEffectClasses(el, payload.msgCommands, payload.sessionFx);
-
       el.style.visibility = "visible";
 
       activeRects.push({
@@ -532,18 +682,12 @@
   function calcFixedPosition(side, slotIndex, elH) {
     const slots = fixedSlots[side];
     let offset  = 0;
-
     for (let i = 0; i < slotIndex; i++) {
-      if (slots[i]) {
-        offset += slots[i].height + RECT_MARGIN;
-      }
+      if (slots[i]) offset += slots[i].height + RECT_MARGIN;
     }
-
-    if (side === "ue") {
-      return { prop: "top",    value: offset };
-    } else {
-      return { prop: "bottom", value: offset };
-    }
+    return side === "ue"
+      ? { prop: "top",    value: offset }
+      : { prop: "bottom", value: offset };
   }
 
   function getAdaptiveScaleForFixed(elH) {
@@ -553,7 +697,7 @@
   }
 
   function applyVerticalFitScale(el, side, rawH) {
-    const scale = getAdaptiveScaleForFixed(rawH);
+    const scale   = getAdaptiveScaleForFixed(rawH);
     const isFixed = el.classList.contains("comment-fixed");
     const isFlow  = el.classList.contains("comment");
 
@@ -565,37 +709,21 @@
 
     if (scale < 1) {
       el.style.setProperty("--fit-scale", String(scale));
-      if (isFixed) {
-        el.style.transform = `translateX(-50%) scale(${scale})`;
-      }
+      if (isFixed) el.style.transform = `translateX(-50%) scale(${scale})`;
       return rawH * scale;
     }
 
     el.style.setProperty("--fit-scale", "1");
-    if (isFixed) {
-      el.style.transform = "translateX(-50%)";
-    }
+    if (isFixed) el.style.transform = "translateX(-50%)";
     return rawH;
   }
 
-  /**
-   * 固定コメントの横はみ出し防止スケール適用。
-   * 縦スケールとの小さい方を採用して、両方向に収まるようにする。
-   * @param {HTMLElement} el
-   * @param {string} side - "ue" | "shita"
-   * @param {number} rawH - 計測前の高さ(px)
-   * @returns {number} - スケール適用後の有効高さ(px)
-   */
   function applyFixedCommentFit(el, side, rawH) {
     const { W, H } = getScreenSize();
     const rawW = el.scrollWidth || el.offsetWidth;
-
-    // 縦・横それぞれのスケール上限
     const scaleV = rawH > 0 && H > 0 ? Math.min(1, H / rawH) : 1;
     const scaleH = rawW > 0 && W > 0 ? Math.min(1, W / rawW) : 1;
-
-    // 両方向に収まる小さい方を採用
-    const scale = Math.min(scaleV, scaleH);
+    const scale  = Math.min(scaleV, scaleH);
 
     el.style.transformOrigin = side === "shita" ? "bottom center" : "top center";
 
@@ -610,7 +738,7 @@
     return rawH;
   }
 
-  function renderFixed(payload) {
+  async function renderFixed(payload) {
     const side  = payload.position;
     const slots = fixedSlots[side];
 
@@ -630,13 +758,17 @@
     const el            = document.createElement("div");
     el.className        = "comment-fixed";
     el.style.visibility = "hidden";
+    // 固定コメントのz-index（管理者は最前面）
+    el.style.zIndex     = String(resolveZIndex(payload, true));
+
+    if (payload.isAdmin) el.classList.add("comment-admin");
 
     if (side === "shita") {
       el.style.top    = "auto";
       el.style.bottom = "0px";
     }
 
-    el.appendChild(buildParts(payload, true));
+    el.appendChild(await buildParts(payload, true));
     applyEffectClasses(el, payload.msgCommands, payload.sessionFx);
 
     stage.appendChild(el);
@@ -649,22 +781,14 @@
 
       const wouldOverflowRemaining = pos.value + effectiveH > H;
       if (wouldOverflowRemaining) {
-        if (side === "ue") {
-          pos = { prop: "top", value: 0 };
-        } else {
-          pos = { prop: "bottom", value: 0 };
-        }
+        pos = side === "ue" ? { prop: "top", value: 0 } : { prop: "bottom", value: 0 };
       }
 
       const wouldOverflowWholeScreen = pos.value + effectiveH > H;
       if (wouldOverflowWholeScreen) {
-        // 縦・横両方を考慮したフィットスケールを適用
         effectiveH = applyFixedCommentFit(el, side, rawH);
-        pos = side === "ue"
-          ? { prop: "top", value: 0 }
-          : { prop: "bottom", value: 0 };
+        pos = side === "ue" ? { prop: "top", value: 0 } : { prop: "bottom", value: 0 };
       } else {
-        // 横はみ出しのみチェック（縦は収まっている）
         effectiveH = applyFixedCommentFit(el, side, rawH);
       }
 

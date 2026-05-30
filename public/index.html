@@ -23,7 +23,7 @@
         "Apple Color Emoji", 
         "Segoe UI Emoji", 
         "Noto Color Emoji", 
-  sans-serif;
+        sans-serif;
     }
 
     #stage {
@@ -78,12 +78,7 @@
       flex-direction: column;
       align-items: flex-start;
       line-height: 1.3;
-      text-shadow:
-        -1px -1px 0 rgba(0,0,0,0.9),
-         1px -1px 0 rgba(0,0,0,0.9),
-        -1px  1px 0 rgba(0,0,0,0.9),
-         1px  1px 0 rgba(0,0,0,0.9),
-         0    2px 6px rgba(0,0,0,0.7);
+      /* text-shadowはJS側でペイロードのcolor/layer情報を元に動的に設定する */
     }
 
     /* ── 流れるコメント ── */
@@ -92,6 +87,7 @@
       white-space: nowrap;
       animation: flow var(--duration, 6s) linear forwards;
       will-change: transform;
+      z-index: 100; /* JS側で上書きされる。初期値 */
     }
 
     /* ── 固定コメント ── */
@@ -101,14 +97,34 @@
       text-align: center;
       left: 50%;
       transform: translateX(-50%);
+      z-index: 300; /* JS側で上書きされる。初期値 */
     }
 
-    /* ── 表示制御 ───────────────────────────────────
-     *
-     * インラインスタイルは CSS クラスより優先度が高いため、
-     * 必要な場合は JS 側で該当スタイルをセットしない。
-     * CSS 側は animation のみを担当する。
-     * ─────────────────────────────────────────────── */
+    /* ── 管理者コメント強調 ──
+     * 金色のアウトラインアニメーションで「最前面」を視覚的に示す。
+     * text-shadowの金グロー効果はJS側で設定済み。
+     * CSS側ではoutlineアニメーションのみ担当。
+     */
+    @keyframes admin-outline-pulse {
+      0%   { box-shadow: 0 0 0px 0px rgba(255, 200, 0, 0); }
+      50%  { box-shadow: 0 0 6px 2px rgba(255, 200, 0, 0.35); }
+      100% { box-shadow: 0 0 0px 0px rgba(255, 200, 0, 0); }
+    }
+
+    .comment-admin {
+      animation-name: flow, admin-outline-pulse;
+      animation-duration: var(--duration, 6s), 2s;
+      animation-timing-function: linear, ease-in-out;
+      animation-iteration-count: 1, infinite;
+      animation-fill-mode: forwards, none;
+    }
+
+    /* 固定コメントの管理者強調（flowアニメーションを上書きしない） */
+    .comment-fixed.comment-admin {
+      animation: admin-outline-pulse 2s ease-in-out infinite;
+    }
+
+    /* ── gaming エフェクト ── */
     @keyframes gaming-color {
       0%   { color: #ff0000; }
       14%  { color: #ff8800; }
@@ -124,7 +140,7 @@
       animation: gaming-color 1.5s linear infinite !important;
     }
 
-    /* ── 表示制御（半透過） ── */
+    /* ── 半透過エフェクト ── */
     .effect-live { opacity: 0.45; }
 
     /* ── flow アニメーション ── */
@@ -141,6 +157,11 @@
 
     .effect-loop {
       animation: flow-loop var(--duration, 6s) linear infinite !important;
+    }
+
+    /* ── 添付画像 ── */
+    .attachment-img {
+      image-rendering: auto;
     }
   </style>
 </head>
