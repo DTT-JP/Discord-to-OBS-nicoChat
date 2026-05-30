@@ -94,7 +94,7 @@ export function createSocketServer() {
     legacyHeaders: false,
   });
 
-  app.get("/*", spaLimiter, (_req, res) => {
+  app.get("/{*splat}", spaLimiter, (_req, res) => {
     res.sendFile(join(PUBLIC_DIR, "index.html"));
   });
 
