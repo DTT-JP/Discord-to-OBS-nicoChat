@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,8 +30,10 @@ const LEGACY_JSON = join(__dirname, "db.json");
 /**
  * @typedef {Object} ActiveSession
  * @property {string} token_hash
+ * @property {string} session_id
  * @property {string} socket_id
  * @property {string} user_id
+ * @property {string} guild_id
  * @property {string} channel_id
  * @property {string} aes_key
  * @property {number} created_at
@@ -48,6 +51,41 @@ db.pragma("busy_timeout = 8000");
 const MAX_COMMENTS_MIN = 1;
 const MAX_COMMENTS_MAX = 99999;
 const DEFAULT_MAX_COMMENTS = 30;
+
+function generateSessionId() {
+  return randomUUID();
+}
+
+function createUniqueSessionId() {
+  for (let i = 0; i < 10; i += 1) {
+    const sessionId = generateSessionId();
+    const exists = db.prepare("SELECT 1 FROM active_sessions WHERE session_id = ?").get(sessionId);
+    if (!exists) return sessionId;
+  }
+  throw new Error("active_sessions の session_id 生成に失敗しました");
+}
+
+function ensureActiveSessionIds() {
+  const rows = /** @type {{ token_hash: string, session_id: string | null }[]} */ (
+    db.prepare("SELECT token_hash, session_id FROM active_sessions ORDER BY created_at ASC").all()
+  );
+  const seen = new Set();
+  const update = db.prepare("UPDATE active_sessions SET session_id = ? WHERE token_hash = ?");
+  const txn = db.transaction(() => {
+    for (const row of rows) {
+      const sessionId = typeof row.session_id === "string" ? row.session_id.trim() : "";
+      if (sessionId && !seen.has(sessionId)) {
+        seen.add(sessionId);
+        continue;
+      }
+      let nextId = generateSessionId();
+      while (seen.has(nextId)) nextId = generateSessionId();
+      update.run(nextId, row.token_hash);
+      seen.add(nextId);
+    }
+  });
+  txn();
+}
 
 /**
  * @param {unknown} v
@@ -76,8 +114,10 @@ function initSchema() {
 
     CREATE TABLE IF NOT EXISTS active_sessions (
       token_hash        TEXT PRIMARY KEY,
+      session_id        TEXT UNIQUE,
       socket_id         TEXT NOT NULL DEFAULT '',
       user_id           TEXT NOT NULL,
+      guild_id          TEXT NOT NULL DEFAULT '',
       channel_id        TEXT NOT NULL,
       aes_key           TEXT NOT NULL,
       created_at        INTEGER NOT NULL,
@@ -177,7 +217,20 @@ function initSchema() {
   if (!activeCols.some((c) => c.name === "secret_allowed")) {
     db.exec(`ALTER TABLE active_sessions ADD COLUMN secret_allowed INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!activeCols.some((c) => c.name === "session_id")) {
+    db.exec(`ALTER TABLE active_sessions ADD COLUMN session_id TEXT`);
+  }
+  if (!activeCols.some((c) => c.name === "guild_id")) {
+    db.exec(`ALTER TABLE active_sessions ADD COLUMN guild_id TEXT`);
+  }
+  ensureActiveSessionIds();
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_active_session_id
+      ON active_sessions(session_id)
+      WHERE session_id IS NOT NULL AND session_id != ''
+  `);
 }
+
 
 initSchema();
 
@@ -264,8 +317,8 @@ export function migrateLegacyJsonIfNeeded() {
   );
   const insActive = db.prepare(
     `INSERT OR IGNORE INTO active_sessions
-     (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, secret_allowed, resume_token_hash)
-     VALUES (?,?,?,?,?,?,?,?,?)`,
+     (token_hash, session_id, socket_id, user_id, guild_id, channel_id, aes_key, created_at, max_comments, secret_allowed, resume_token_hash)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
   );
   const insAllowed = db.prepare(
     `INSERT OR IGNORE INTO allowed_principals (type, id, guild_id) VALUES (?,?,?)`,
@@ -333,8 +386,10 @@ export function migrateLegacyJsonIfNeeded() {
         bump(
           insActive.run(
             th,
+            String(row.session_id || createUniqueSessionId()),
             String(row.socket_id ?? ""),
             String(row.user_id),
+            String(row.guild_id ?? ""),
             String(row.channel_id),
             String(row.aes_key),
             Number(row.created_at ?? Date.now()),
@@ -554,22 +609,25 @@ export const PendingAuthDB = {
 
 export const ActiveSessionDB = {
   /**
-   * @param {Omit<ActiveSession, "token_hash"> & { token?: string, token_hash?: string, resume_token_hash?: string }} record
+   * @param {Omit<ActiveSession, "token_hash" | "session_id"> & { token?: string, token_hash?: string, session_id?: string, resume_token_hash?: string }} record
    */
   add(record) {
     const tokenHash = record.token_hash || hashToken(record.token || "");
     const maxComments = clampMaxComments(record.max_comments);
+    const sessionId = record.session_id || createUniqueSessionId();
     const createdAt = Number(record.created_at);
     const safeCreatedAt = Number.isFinite(createdAt) ? createdAt : Date.now();
     const run = db.transaction(() => {
       db.prepare(
         `INSERT INTO active_sessions
-         (token_hash, socket_id, user_id, channel_id, aes_key, created_at, max_comments, secret_allowed, resume_token_hash)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+         (token_hash, session_id, socket_id, user_id, guild_id, channel_id, aes_key, created_at, max_comments, secret_allowed, resume_token_hash)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
         tokenHash,
+        sessionId,
         record.socket_id ?? "",
         record.user_id,
+        record.guild_id ?? "",
         record.channel_id,
         record.aes_key,
         safeCreatedAt,
