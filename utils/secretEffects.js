@@ -23,3 +23,11 @@ export const SECRET_EFFECTS = [
 export const KNOWN_SECRET_EFFECTS = new Set(SECRET_EFFECTS.map((effect) => effect.value));
 
 export const SECRET_EFFECT_CHOICES = SECRET_EFFECTS.map(({ name, value }) => ({ name, value }));
+
+export function normalizeSecretEffect(effectRaw) {
+  return String(effectRaw ?? "").trim().toLowerCase();
+}
+
+export function isKnownSecretEffect(effectRaw) {
+  return KNOWN_SECRET_EFFECTS.has(normalizeSecretEffect(effectRaw));
+}
