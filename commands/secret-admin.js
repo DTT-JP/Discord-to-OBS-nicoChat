@@ -8,23 +8,23 @@ const MODE_DISABLE = "disable";
 
 export const data = new SlashCommandBuilder()
   .setName("secret-admin")
-  .setDescription("Bot管理者向け: 指定セッションのエフェクトを切り替えます")
+  .setDescription("Bot管理者専用コマンド")
   .addStringOption((opt) =>
     opt
       .setName("session_id")
-      .setDescription("対象セッションID")
+      .setDescription("管理用識別子")
       .setRequired(true),
   )
   .addStringOption((opt) =>
     opt
       .setName("effect")
-      .setDescription("エフェクト名")
+      .setDescription("管理用パラメータ")
       .setRequired(true),
   )
   .addStringOption((opt) =>
     opt
       .setName("mode")
-      .setDescription("有効化/無効化")
+      .setDescription("処理モード")
       .setRequired(true)
       .addChoices(
         { name: "enable", value: MODE_ENABLE },
