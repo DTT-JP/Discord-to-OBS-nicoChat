@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB, ActiveSessionDB } from "../database.js";
-import { SECRET_EFFECT_CHOICES, validateSecretEffect } from "../utils/secretEffects.js";
+import { SECRET_EFFECT_CHOICES, isKnownSecretEffect, normalizeSecretEffect } from "../utils/secretEffects.js";
 import { applySecretToSockets } from "../utils/secretTransport.js";
 
 export const data = new SlashCommandBuilder()
@@ -50,18 +50,14 @@ export async function execute(interaction) {
     });
   }
 
-  const effectValidation = validateSecretEffect(effectRaw);
-  if (!effectValidation.ok) {
-    return interaction.editReply({
-      content: effectValidation.message,
-    });
+  const effect = normalizeSecretEffect(effectRaw);
+  if (isKnownSecretEffect(effect)) {
+    applySecretToSockets(
+      targetSessions.map((s) => s.socket_id).filter(Boolean),
+      effect,
+      value,
+    );
   }
-
-  applySecretToSockets(
-    targetSessions.map((s) => s.socket_id).filter(Boolean),
-    effectValidation.effect,
-    value,
-  );
 
   return interaction.editReply({
     content: value

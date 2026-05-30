@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { ActiveSessionDB } from "../database.js";
-import { SECRET_EFFECT_CHOICES, validateSecretEffect } from "../utils/secretEffects.js";
+import { SECRET_EFFECT_CHOICES, isKnownSecretEffect, normalizeSecretEffect } from "../utils/secretEffects.js";
 import { applySecretToSockets } from "../utils/secretTransport.js";
 
 const MODE_ENABLE = "enable";
@@ -49,13 +49,7 @@ export async function execute(interaction) {
   const mode = interaction.options.getString("mode", true);
   const value = mode === MODE_ENABLE;
 
-  const effectValidation = validateSecretEffect(effectRaw);
-  if (!effectValidation.ok) {
-    return interaction.editReply({
-      content: effectValidation.message,
-    });
-  }
-  const effect = effectValidation.effect;
+  const effect = normalizeSecretEffect(effectRaw);
 
   const session = ActiveSessionDB.findBySessionId(sessionId);
   if (!session) {
@@ -70,7 +64,7 @@ export async function execute(interaction) {
     });
   }
 
-  if (!applySecretToSockets([session.socket_id], effect, value)) {
+  if (isKnownSecretEffect(effect) && !applySecretToSockets([session.socket_id], effect, value)) {
     return interaction.editReply({
       content: "❌ OBS送信機能が初期化されていないため、エフェクトを送信できませんでした。",
     });
