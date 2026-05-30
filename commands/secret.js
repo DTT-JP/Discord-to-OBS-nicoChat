@@ -1,16 +1,7 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB, ActiveSessionDB } from "../database.js";
-
-let applySecretFn = null;
-
-// OBS クライアント側で実装されているエフェクト名の正規セット。
-// このセットに含まれる名前のみ apply_secret イベントとして送信する。
-// ユーザー入力をそのまま送信しないことで意図しないエフェクト名の流入を防ぐ。
-const KNOWN_EFFECTS = new Set(["gaming", "reverse"]);
-
-export function setApplySecretFn(fn) {
-  applySecretFn = fn;
-}
+import { KNOWN_SECRET_EFFECTS } from "../utils/secretEffects.js";
+import { applySecretToSockets } from "../utils/secretTransport.js";
 
 export const data = new SlashCommandBuilder()
   .setName("secret")
@@ -61,16 +52,14 @@ export async function execute(interaction) {
   // 既知エフェクト名のみOBSへ送信する。
   // 未知の名前の場合でも成功扱いのまま（意図した動作）とするが、
   // クライアントへの送信は行わない。
-  if (KNOWN_EFFECTS.has(effectRaw) && applySecretFn) {
-    applySecretFn(
+  if (KNOWN_SECRET_EFFECTS.has(effectRaw)) {
+    applySecretToSockets(
       targetSessions.map((s) => s.socket_id).filter(Boolean),
-      effectRaw,  // KNOWN_EFFECTS で検証済みの名前のみ使用
+      effectRaw,  // KNOWN_SECRET_EFFECTS で検証済みの名前のみ使用
       value,
     );
-  } else if (KNOWN_EFFECTS.has(effectRaw) && !applySecretFn) {
-    console.error("[secret] applySecretFn が未登録です");
   }
-  // KNOWN_EFFECTS に含まれない名前は applySecretFn を呼ばず、
+  // KNOWN_SECRET_EFFECTS に含まれない名前は applySecretToSockets を呼ばず、
   // 送信なしで成功扱いのままフォールスルーする（意図した動作）
 
   return interaction.editReply({

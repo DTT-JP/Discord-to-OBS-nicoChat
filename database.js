@@ -647,6 +647,10 @@ export const ActiveSessionDB = {
     if (!socketId) return undefined;
     return db.prepare("SELECT * FROM active_sessions WHERE socket_id = ?").get(socketId) ?? undefined;
   },
+  findBySessionId(sessionId) {
+    if (!sessionId) return undefined;
+    return db.prepare("SELECT * FROM active_sessions WHERE session_id = ?").get(sessionId) ?? undefined;
+  },
   findByUserId(userId) {
     return db.prepare("SELECT * FROM active_sessions WHERE user_id = ?").get(userId) ?? undefined;
   },

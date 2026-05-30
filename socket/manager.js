@@ -3,7 +3,7 @@ import { generateAuthCode, encrypt } from "../utils/crypto.js";
 import { maskSecrets } from "../utils/logSafe.js";
 import { setDistributeKeyFn } from "../commands/auth.js";
 import { setUpdateLimitFn }   from "../commands/session.js";
-import { setApplySecretFn }   from "../commands/secret.js";
+import { setApplySecretFn }   from "../utils/secretTransport.js";
 import { setBroadcastFn }     from "../events/messageCreate.js";
 
 let shuttingDown = false;
