@@ -4,6 +4,7 @@ import { safeForLog } from "../utils/logSafe.js";
 import { parsePageCustomId, handleListPageButton } from "../utils/paginatedList.js";
 import { isHelpComponentInteraction, handleHelpComponent } from "../commands/help.js";
 import { formatDateTime } from "../utils/moderation.js";
+import { isBotOwnerUserId } from "../utils/botOwner.js";
 
 export const name  = Events.InteractionCreate;
 export const once  = false;
@@ -15,8 +16,7 @@ export const once  = false;
 export async function execute(interaction, client) {
   // ── グローバルギルドブラックリストチェック ─────────
   // ブラックリスト対象ギルドでは、Bot管理者以外の利用を遮断する
-  const botOwnerId = process.env.BOT_OWNER_ID?.trim();
-  const isBotOwnerUser = !!botOwnerId && interaction.user?.id === botOwnerId;
+  const isBotOwnerUser = isBotOwnerUserId(interaction.user?.id);
   const guildId = interaction.guildId;
   if (guildId && !isBotOwnerUser) {
     const entry = await GlobalGuildBlacklistDB.find(guildId);
@@ -71,14 +71,12 @@ export async function execute(interaction, client) {
   }
 
   if (!interaction.isChatInputCommand()) return;
-  const subcommand = interaction.options.getSubcommand(false);
-
   // ── グローバルブラックリストチェック ──────────
   // コマンド実行自体を遮断する（ローカルBLはコマンドは許可・OBSのみ遮断）
   const isMyStatusCheck = interaction.commandName === "my-status";
-  const isSessionAdminByOwner = interaction.commandName === "session-admin" && isBotOwnerUser;
-  const isSecretAdminByOwner = interaction.commandName === "secret-admin" && isBotOwnerUser;
-  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck && !isSessionAdminByOwner && !isSecretAdminByOwner) {
+  const adminBypassCommands = new Set(["session-admin", "secret-admin", "status-admin", "global_blacklist", "global_guild_blacklist"]);
+  const isAdminCommandByAdmin = adminBypassCommands.has(interaction.commandName) && isBotOwnerUser;
+  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck && !isAdminCommandByAdmin) {
     return interaction.reply({
       content: "このBotを利用する権限がありません。",
       flags: MessageFlags.Ephemeral,

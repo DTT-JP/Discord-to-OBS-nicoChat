@@ -1,9 +1,12 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { ListScope, replyPaginatedList } from "../utils/paginatedList.js";
+import { isBotOwnerInteraction } from "../utils/botOwner.js";
 
 export const data = new SlashCommandBuilder()
+  .setDefaultMemberPermissions(0)
+  .setDMPermission(false)
   .setName("session-admin")
-  .setDescription("BOT開発者向けのセッション管理コマンドです")
+  .setDescription("BOT管理者向けのセッション管理コマンドです")
   .addSubcommand((sub) =>
     sub
       .setName("list")
@@ -20,8 +23,8 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  if (process.env.BOT_OWNER_ID?.trim() !== interaction.user.id) {
-    return interaction.editReply({ content: "❌ session-admin はBOT開発者のみ実行できます。" });
+  if (!isBotOwnerInteraction(interaction)) {
+    return interaction.editReply({ content: "❌ session-admin はBOT管理者のみ実行できます。" });
   }
 
   const sub = interaction.options.getSubcommand();

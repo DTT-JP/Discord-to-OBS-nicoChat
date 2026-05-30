@@ -53,7 +53,7 @@ Socket.io の CORS ポリシーは `utils/corsPolicy.js` に集約されてい�
 | `/config` | **サーバーオーナー・管理者**のみ |
 | `/setup` | サーバーオーナー・管理者、または `/config` で許可された担当 |
 | `/blacklist` | サーバーオーナー・管理者、または `/config` の `ctrl_blacklist_*` で許可されたユーザー |
-| `/global_blacklist` | `.env` の `BOT_OWNER_ID` と一致するユーザーのみ |
+| `/global_blacklist` / `/global_guild_blacklist` / `/session-admin` / `/secret-admin` / `/status-admin` | `.env` の `BOT_OWNER_ID` に含まれるユーザーのみ。Discord側では通常メンバーに既定非表示・DM非表示 |
 
 ## ブラックリスト
 

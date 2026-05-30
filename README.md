@@ -183,6 +183,7 @@ npm run dev
 | `/global_blacklist` | グローバルBL管理 |
 | `/global_guild_blacklist` | グローバルギルドBL管理 |
 | `/session-admin list` | 全アクティブセッションと `session_id` を一覧表示 |
+| `/status-admin` | Bot管理者向けの詳細ステータスを表示 |
 | `/secret-admin` | Bot管理者が指定 `session_id` のエフェクトを有効化/無効化 |
 
 ## OBS設定の目安

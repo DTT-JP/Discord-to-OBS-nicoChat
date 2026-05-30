@@ -8,6 +8,7 @@ import {
   StringSelectMenuBuilder,
 } from "discord.js";
 import { VERSION } from "../utils/version.js";
+import { isBotOwnerUserId } from "../utils/botOwner.js";
 
 const HELP_PREFIX = "helpnav";
 
@@ -46,7 +47,7 @@ const HELP_SECTIONS = [
 ];
 
 function isBotOwner(userId) {
-  return !!process.env.BOT_OWNER_ID?.trim() && process.env.BOT_OWNER_ID.trim() === userId;
+  return isBotOwnerUserId(userId);
 }
 
 function getVisibleHelpSections(userId) {
@@ -228,6 +229,11 @@ function buildHelpEmbed(sectionId) {
           {
             name:  "🧾 `/session-admin`",
             value: "全アクティブセッションの管理・確認を行います。",
+            inline: false,
+          },
+          {
+            name:  "📊 `/status-admin`",
+            value: "BOTオーナー向けの詳細ステータスを表示します。",
             inline: false,
           },
         );
