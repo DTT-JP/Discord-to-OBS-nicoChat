@@ -7,9 +7,14 @@ import {
   ButtonStyle,
   StringSelectMenuBuilder,
 } from "discord.js";
+import { SECRET_EFFECTS } from "../utils/secretEffects.js";
 import { VERSION } from "../utils/version.js";
 
 const HELP_PREFIX = "helpnav";
+
+const SECRET_EFFECT_LIST = SECRET_EFFECTS
+  .map((effect) => `\`${effect.value}\` — ${effect.description}`)
+  .join("\n");
 
 const HELP_SECTIONS = [
   {
@@ -100,6 +105,20 @@ function buildHelpEmbed(sectionId) {
           {
             name:  "🛠️ `/session [channel] [limit] [secret]`",
             value: "自分が作成したセッションの同時表示上限や secret 許可設定を変更します。",
+            inline: false,
+          },
+          {
+            name:  "✨ `/secret effect value`",
+            value: [
+              "現在のチャンネルで許可されているセッションのエフェクトを切り替えます。",
+              "対応エフェクト:",
+              SECRET_EFFECT_LIST,
+            ].join("\n"),
+            inline: false,
+          },
+          {
+            name:  "🛡️ `/secret-admin session_id effect mode`",
+            value: "Bot管理者が指定したセッションIDのエフェクトを直接有効化/無効化します。",
             inline: false,
           },
           {

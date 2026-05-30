@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { ActiveSessionDB } from "../database.js";
-import { KNOWN_SECRET_EFFECTS } from "../utils/secretEffects.js";
+import { KNOWN_SECRET_EFFECTS, SECRET_EFFECT_CHOICES } from "../utils/secretEffects.js";
 import { applySecretToSockets } from "../utils/secretTransport.js";
 
 const MODE_ENABLE = "enable";
@@ -15,18 +15,13 @@ export const data = new SlashCommandBuilder()
       .setDescription("対象セッションID")
       .setRequired(true),
   )
-  .addStringOption((opt) => {
+  .addStringOption((opt) =>
     opt
       .setName("effect")
       .setDescription("エフェクト名")
-      .setRequired(true);
-
-    for (const effect of KNOWN_SECRET_EFFECTS) {
-      opt.addChoices({ name: effect, value: effect });
-    }
-
-    return opt;
-  })
+      .setRequired(true)
+      .addChoices(...SECRET_EFFECT_CHOICES),
+  )
   .addStringOption((opt) =>
     opt
       .setName("mode")
