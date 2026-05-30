@@ -7,6 +7,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  PermissionsBitField,
 } from "discord.js";
 import {
   PendingAuthDB,
@@ -121,6 +122,30 @@ export async function execute(interaction) {
   if (!channel || channel.guildId !== guildId) {
     return interaction.reply({
       content: "❌ 指定されたチャンネルがこのサーバーに属していません。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const botMember = interaction.guild.members.me
+    ?? await interaction.guild.members.fetchMe().catch(() => null);
+  const botCanViewChannel = Boolean(
+    botMember
+      && channel.permissionsFor(botMember)?.has(PermissionsBitField.Flags.ViewChannel),
+  );
+  if (!botCanViewChannel) {
+    return interaction.reply({
+      content: "❌ BOTが指定チャンネルを閲覧できません。",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const userCanViewChannel = Boolean(
+    interaction.member
+      && channel.permissionsFor(interaction.member)?.has(PermissionsBitField.Flags.ViewChannel),
+  );
+  if (!userCanViewChannel) {
+    return interaction.reply({
+      content: "❌ あなたが指定チャンネルを閲覧できません。",
       flags: MessageFlags.Ephemeral,
     });
   }
