@@ -77,7 +77,8 @@ export async function execute(interaction, client) {
   // コマンド実行自体を遮断する（ローカルBLはコマンドは許可・OBSのみ遮断）
   const isMyStatusCheck = interaction.commandName === "my-status";
   const isSecretByOwner = interaction.commandName === "secret" && isBotOwnerUser;
-  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck && !isSecretByOwner) {
+  const isSessionAdminByOwner = interaction.commandName === "session-admin" && isBotOwnerUser;
+  if (GlobalBlacklistDB.has(interaction.user.id) && !isMyStatusCheck && !isSecretByOwner && !isSessionAdminByOwner) {
     return interaction.reply({
       content: "このBotを利用する権限がありません。",
       flags: MessageFlags.Ephemeral,
