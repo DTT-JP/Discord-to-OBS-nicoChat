@@ -8,15 +8,24 @@
   let MAX_FLOW_COMMENTS = 30;       // auth_success で上書き
   const FIXED_DISPLAY_MS  = 4000;  // 上下固定の表示時間（ms）
 
-  // 速度: 画面幅 / DIVISOR = px/秒
-  const SPEED_DIVISOR_MIN = 2.5;
-  const SPEED_DIVISOR_MAX = 5.0;
+  // ── 速度設定（横流れ） ───────────────────────────
+  // 画面幅 / DIVISOR = px/秒
+  // 4秒基準: 短いコメントは divisor=4.0 (W px / (W/4s) = 4s)
+  //          長いコメントは divisor=6.0 (少し遅め)
+  const SPEED_DIVISOR_MIN = 4.0;  // 短いコメント（文字数 >= CHAR_THRESHOLD）
+  const SPEED_DIVISOR_MAX = 6.0;  // 長いコメント（文字数 <= 0）
   const CHAR_THRESHOLD    = 30;
 
+  // ── サイズ設定 ───────────────────────────────────
+  // medium: 約12行収まる → 画面高さ / (fontSize * lineHeight * 12) ≈ 1
+  //   fontSize = vh * H/100, lineHeight = 1.3
+  //   12行 * 1.3 * (vh/100 * H) <= H → vh <= 100/(12*1.3) ≈ 6.41vh → 6vh
+  // small: 約21行収まる → 100/(21*1.3) ≈ 3.66vh → 3.5vh
+  // big: 大きめ表示
   const SIZE_CONFIG = {
-    big:    { vh: 12 },
-    medium: { vh:  6 },
-    small:  { vh:  3 },
+    big:    { vh: 10 },    // 約7行が縮小なしの目安
+    medium: { vh:  6 },    // 約12行が縮小なしの目安
+    small:  { vh:  3.5 },  // 約21行が縮小なしの目安
   };
 
   // セッション単位の表示制御
@@ -110,6 +119,20 @@
   }
 
   // ────────────────────────────────────────────────
+  // フォントファミリー定義
+  // ────────────────────────────────────────────────
+
+  const FONT_GOTHIC =
+    '"MS P Gothic", "MS PGothic", "Mona", "IPA Pゴシック", "IPA PGothic", ' +
+    '"Mplus 1p", "Hiragino Kaku Gothic ProN", "Apple Color Emoji", ' +
+    '"Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+
+  const FONT_MINCHO =
+    '"MS P明朝", "MS PMincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", ' +
+    '"Yu Mincho", "游明朝", "YuMincho", "ＭＳ Ｐ明朝", ' +
+    '"Noto Serif JP", serif';
+
+  // ────────────────────────────────────────────────
   // ユーティリティ
   // ────────────────────────────────────────────────
 
@@ -121,6 +144,9 @@
   /** 速度計算（px/秒） */
   function calcSpeed(charCount) {
     const { W } = getScreenSize();
+    // charCount が少ないほど divisor が小さく（速く）、多いほど大きく（遅く）なる
+    // CHAR_THRESHOLD 以上で divisor = SPEED_DIVISOR_MIN (速め)
+    // 0 で divisor = SPEED_DIVISOR_MAX (遅め)
     const r       = Math.min(charCount, CHAR_THRESHOLD) / CHAR_THRESHOLD;
     const divisor = SPEED_DIVISOR_MIN + (SPEED_DIVISOR_MAX - SPEED_DIVISOR_MIN) * (1 - r);
     return W / divisor;
@@ -154,19 +180,15 @@
       }
 
       // ── 認証コードをDOMから完全に削除 ──────────
-      // トークンがURLに残るため、認証後は画面上から
-      // コードを残さないようにテキストと要素をクリアする
       authCodeDisplay.textContent = "";
       const codeLabel = authScreen.querySelector("h1");
       if (codeLabel) codeLabel.remove();
       const codeDesc = authScreen.querySelector("p");
       if (codeDesc) codeDesc.remove();
-      // authCodeDisplay 自体も空にして非表示
       authCodeDisplay.style.display = "none";
 
       authScreen.style.display = "none";
 
-      // 認証完了後は URL からトークンクエリを取り除く（履歴・共有時の露出軽減）
       try {
         const path = location.pathname || "/";
         const next = `${path}${location.hash || ""}`;
@@ -223,7 +245,6 @@
       fixedSlots[side].forEach((s) => { if (s) { clearTimeout(s.timerId); s.el.remove(); } });
       fixedSlots[side].fill(null);
     }
-    // 切断時: 認証コード表示をリセットして認証画面を再表示
     authCodeDisplay.textContent  = "------";
     authCodeDisplay.style.color  = "#57f287";
     authCodeDisplay.style.display = "";
@@ -270,6 +291,9 @@
     if (payload.styles?.underline)     deco.push("underline");
     if (payload.styles?.strikethrough) deco.push("line-through");
 
+    // フォントファミリー決定（gothic / mincho、未指定はgothic）
+    const fontFamily = payload.font === "mincho" ? FONT_MINCHO : FONT_GOTHIC;
+
     const lines = [[]];
     for (const part of payload.p) {
       if (part.type === "text") {
@@ -300,6 +324,7 @@
           span.style.fontSize     = `${sizePx}px`;
           span.style.lineHeight   = "1.3";
           span.style.whiteSpace   = "pre";
+          span.style.fontFamily   = fontFamily;
 
           if (!hasGaming) {
             const color = payload.color || "#ffffff";
@@ -359,7 +384,6 @@
             img.style.fontStyle     = "normal";
             img.style.transform     = "none";
 
-            // クラッシュGIF対策: GIFスタンプは静止プレビューPNGを使う
             if (part.stickerFormat === "gif" && part.stickerId) {
               img.src = `https://media.discordapp.net/stickers/${part.stickerId}.png?size=160`;
             } else {
@@ -395,7 +419,6 @@
   function findFreeY(elH, minY, maxY) {
     const now = performance.now();
 
-    // 期限切れ矩形を削除
     for (let i = activeRects.length - 1; i >= 0; i--) {
       if (now > activeRects[i].expire) activeRects.splice(i, 1);
     }
@@ -472,7 +495,10 @@
       if (hasReverse) {
         el.style.left = `-${elW}px`;
         const anim = el.animate(
-          [{ transform: `translateX(0) scale(${el.style.getPropertyValue("--fit-scale") || "1"})` }, { transform: `translateX(${distance}px) scale(${el.style.getPropertyValue("--fit-scale") || "1"})` }],
+          [
+            { transform: `translateX(0) scale(${el.style.getPropertyValue("--fit-scale") || "1"})` },
+            { transform: `translateX(${distance}px) scale(${el.style.getPropertyValue("--fit-scale") || "1"})` },
+          ],
           { duration: duration * 1000, easing: "linear", fill: "forwards" },
         );
         anim.onfinish = () => { el.remove(); flowCount--; };
@@ -520,7 +546,6 @@
     }
   }
 
-
   function getAdaptiveScaleForFixed(elH) {
     const { H } = getScreenSize();
     if (elH <= 0 || H <= 0) return 1;
@@ -550,6 +575,38 @@
     if (isFixed) {
       el.style.transform = "translateX(-50%)";
     }
+    return rawH;
+  }
+
+  /**
+   * 固定コメントの横はみ出し防止スケール適用。
+   * 縦スケールとの小さい方を採用して、両方向に収まるようにする。
+   * @param {HTMLElement} el
+   * @param {string} side - "ue" | "shita"
+   * @param {number} rawH - 計測前の高さ(px)
+   * @returns {number} - スケール適用後の有効高さ(px)
+   */
+  function applyFixedCommentFit(el, side, rawH) {
+    const { W, H } = getScreenSize();
+    const rawW = el.scrollWidth || el.offsetWidth;
+
+    // 縦・横それぞれのスケール上限
+    const scaleV = rawH > 0 && H > 0 ? Math.min(1, H / rawH) : 1;
+    const scaleH = rawW > 0 && W > 0 ? Math.min(1, W / rawW) : 1;
+
+    // 両方向に収まる小さい方を採用
+    const scale = Math.min(scaleV, scaleH);
+
+    el.style.transformOrigin = side === "shita" ? "bottom center" : "top center";
+
+    if (scale < 1) {
+      el.style.setProperty("--fit-scale", String(scale));
+      el.style.transform = `translateX(-50%) scale(${scale})`;
+      return rawH * scale;
+    }
+
+    el.style.setProperty("--fit-scale", "1");
+    el.style.transform = "translateX(-50%)";
     return rawH;
   }
 
@@ -601,10 +658,14 @@
 
       const wouldOverflowWholeScreen = pos.value + effectiveH > H;
       if (wouldOverflowWholeScreen) {
-        effectiveH = applyVerticalFitScale(el, side, rawH);
+        // 縦・横両方を考慮したフィットスケールを適用
+        effectiveH = applyFixedCommentFit(el, side, rawH);
         pos = side === "ue"
           ? { prop: "top", value: 0 }
           : { prop: "bottom", value: 0 };
+      } else {
+        // 横はみ出しのみチェック（縦は収まっている）
+        effectiveH = applyFixedCommentFit(el, side, rawH);
       }
 
       if (pos.prop === "top") {

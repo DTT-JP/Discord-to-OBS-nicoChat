@@ -43,26 +43,28 @@ const HEADING_SIZE_MAP = {
 const SESSION_EFFECTS = new Set(["gaming", "reverse", "loop"]);
 const MSG_COMMANDS    = new Set(["invisible", "_live"]);
 
+// フォント指定値
+const VALID_FONTS = new Set(["gothic", "mincho"]);
+
 // ─────────────────────────────────────────────
 // V2 メタブロックパーサー
 // ─────────────────────────────────────────────
 
 /**
  * テキスト内の ?attr1 attr2? を全て抽出・除去して
- * color / size / position / sessionFx / msgCommands を返す
+ * color / size / position / sessionFx / msgCommands / font を返す
  *
  * ★ 正規表現を関数内で毎回生成することで
  *    g フラグの lastIndex 持続問題を完全回避する
- *    → Windows/Debian/Node バージョン差による再現性の差をなくす
  */
 function parseMetaBlock(raw) {
   let color       = null;
   let size        = null;
   let position    = null;
+  let font        = null;  // "gothic" | "mincho" | null（null はデフォルト = gothic）
   const sessionFx   = [];
   const msgCommands = [];
 
-  // ★ 毎回新しいオブジェクトを生成 → lastIndex は常に 0 から始まる
   const cleaned = raw.replace(/\?([^?]+)\?/g, (_, attrsRaw) => {
     const attrs = attrsRaw.trim().toLowerCase().split(/\s+/);
 
@@ -91,13 +93,17 @@ function parseMetaBlock(raw) {
         position = "shita";
         continue;
       }
+      // フォント切り替え
+      if (VALID_FONTS.has(attr)) {
+        font = attr;
+        continue;
+      }
       // セッションエフェクト
       if (SESSION_EFFECTS.has(attr)) {
         sessionFx.push(attr);
         continue;
       }
       // メッセージ単位コマンド
-      // _live は全角スペース先頭でも来る可能性がある
       const normalized = attr.replace(/^\u3000/, "_live");
       if (MSG_COMMANDS.has(normalized)) {
         msgCommands.push(normalized);
@@ -115,6 +121,7 @@ function parseMetaBlock(raw) {
     color,
     size,
     position,
+    font,
     sessionFx,
     msgCommands,
     cleaned: cleaned.trim(),
@@ -141,7 +148,6 @@ function extractHeadingSize(text) {
 /**
  * ★ 全ての正規表現を関数内ローカルで生成
  *    グローバル g フラグ付き正規表現の lastIndex 持続問題を完全回避
- *    動作は元コードと完全に同一
  */
 function extractInlineStyles(text) {
   let bold = false, italic = false, underline = false, strikethrough = false;
@@ -185,8 +191,6 @@ function parseTextSegments(text) {
   let lastIndex = 0;
   let match;
 
-  // while ループで使う RE_ANY_EMOJI のみグローバル定数を再利用
-  // 使用前後に lastIndex をリセットして安全を担保
   RE_ANY_EMOJI.lastIndex = 0;
 
   while ((match = RE_ANY_EMOJI.exec(text)) !== null) {
@@ -203,7 +207,7 @@ function parseTextSegments(text) {
     lastIndex = RE_ANY_EMOJI.lastIndex;
   }
 
-  RE_ANY_EMOJI.lastIndex = 0; // 使用後もリセット
+  RE_ANY_EMOJI.lastIndex = 0;
 
   if (lastIndex < text.length) {
     const seg = text.slice(lastIndex);
@@ -307,6 +311,7 @@ export function parseMessage(message, watchChannelIds) {
       av:          message.author.displayAvatarURL({ size: 64, extension: "webp" }),
       color:       null,
       size:        "medium",
+      font:        null,   // デフォルト（gothic）
       position:    null,
       sessionFx:   [],
       msgCommands: [],
@@ -325,6 +330,7 @@ export function parseMessage(message, watchChannelIds) {
     color,
     size:        metaSize,
     position,
+    font,
     sessionFx,
     msgCommands,
     cleaned:     afterMeta,
@@ -335,7 +341,7 @@ export function parseMessage(message, watchChannelIds) {
   let afterHeading = afterMeta;
   if (!size) {
     const h  = extractHeadingSize(afterMeta);
-    size         = h.size ?? "medium"; // デフォルトは "medium"（null にしない）
+    size         = h.size ?? "medium";
     afterHeading = h.cleaned;
   }
 
@@ -354,7 +360,8 @@ export function parseMessage(message, watchChannelIds) {
     a:           message.member?.displayName ?? message.author.username,
     av:          message.author.displayAvatarURL({ size: 64, extension: "webp" }),
     color,
-    size,        // "big" | "medium" | "small" のいずれか（null にならない）
+    size,        // "big" | "medium" | "small"
+    font,        // "gothic" | "mincho" | null（null = gothic）
     position,    // "ue" | "shita" | null
     sessionFx,
     msgCommands,
