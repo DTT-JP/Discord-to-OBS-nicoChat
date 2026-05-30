@@ -1,5 +1,6 @@
 import {
   randomBytes,
+  randomInt,
   createCipheriv,
   createDecipheriv,
   createHash,
@@ -36,8 +37,8 @@ export function generateAesKey() {
  * @returns {string} "000000" 〜 "999999"
  */
 export function generateAuthCode() {
-  // 3バイト（0〜16777215）を取得し、下6桁を使用
-  const num = randomBytes(3).readUIntBE(0, 3) % 1_000_000;
+  // crypto.randomInt を使って偏りのない 0 ～ 999999 を生成
+  const num = randomInt(0, 1_000_000);
   return String(num).padStart(6, "0");
 }
 

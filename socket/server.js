@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { Server } from "socket.io";
 import { resolveCorsConfigForSocketIo, isLocalDevOrigin } from "../utils/corsPolicy.js";
 
@@ -85,7 +86,15 @@ export function createSocketServer() {
   });
 
   // ── SPA フォールバック（全パスを index.html へ） ──
-  app.get("/{*splat}", (_req, res) => {
+  // このハンドラはファイルシステムへアクセスするため、レートリミットを適用します
+  const spaLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15分
+    max: 200, // 15分あたり最大200回のリクエスト
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  app.get("/*", spaLimiter, (_req, res) => {
     res.sendFile(join(PUBLIC_DIR, "index.html"));
   });
 
