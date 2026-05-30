@@ -144,7 +144,7 @@
    * @returns {string} CSSカラー文字列
    */
   function calcOutlineColor(colorHex) {
-    if (!colorHex) return "rgba(0,0,0,0.9)";
+    if (!colorHex) return "rgba(0,0,0,0.92)";
     const hex = colorHex.replace("#", "");
     let r, g, b;
     if (hex.length === 3) {
@@ -158,22 +158,32 @@
     }
     // 相対輝度（sRGB輝度近似）
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    // 明るい色（luminance > 0.5）→ 黒縁
-    return luminance > 0.5 ? "rgba(0,0,0,0.92)" : "rgba(255,255,255,0.25)";
+    // 明るい色（luminance > 0.5）→ 黒縁、暗い色 → 白縁（不透明度を高くして視認性確保）
+    return luminance > 0.5 ? "rgba(0,0,0,0.92)" : "rgba(255,255,255,0.90)";
   }
 
   /**
    * テキストシャドウスタイル文字列を生成する。
+   * 4方向縁取り + 強いドロップシャドウで映像背景への視認性を確保する。
    * @param {string} outlineColor
    * @returns {string}
    */
   function buildTextShadow(outlineColor) {
     return [
+      // 4方向の縁取り（1px）
       `-1px -1px 0 ${outlineColor}`,
        `1px -1px 0 ${outlineColor}`,
       `-1px  1px 0 ${outlineColor}`,
        `1px  1px 0 ${outlineColor}`,
-       `0    2px 6px rgba(0,0,0,0.7)`,
+      // 斜め方向も追加して縁取りを強化
+      `-2px -2px 0 ${outlineColor}`,
+       `2px -2px 0 ${outlineColor}`,
+      `-2px  2px 0 ${outlineColor}`,
+       `2px  2px 0 ${outlineColor}`,
+      // 強いドロップシャドウ（どんな背景でも浮き上がる）
+       `0 2px 4px rgba(0,0,0,0.95)`,
+       `0 4px 8px rgba(0,0,0,0.85)`,
+       `0 0 12px rgba(0,0,0,0.7)`,
     ].join(", ");
   }
 
