@@ -13,6 +13,7 @@ import {
   LocalBlacklistDB,
   GlobalBlacklistDB,
   GlobalGuildBlacklistDB,
+  ActiveSessionDB,
 } from "../database.js";
 import { isAdminOrOwner, formatDateTime, formatRemaining, truncateReason } from "./moderation.js";
 
@@ -30,6 +31,7 @@ export const ListScope = {
   BLACKLIST_ENTRIES: "bl_li",
   GLOBAL_BL: "gbl",
   GLOBAL_GUILD_BL: "ggbl",
+  SESSION_ADMIN: "sessadm",
 };
 
 const TITLES = {
@@ -43,6 +45,7 @@ const TITLES = {
   [ListScope.BLACKLIST_ENTRIES]: "🚫 /blacklist — サーバー登録一覧",
   [ListScope.GLOBAL_BL]: "🚫 /global_blacklist — 一覧",
   [ListScope.GLOBAL_GUILD_BL]: "🚫 /global_guild_blacklist — 一覧",
+  [ListScope.SESSION_ADMIN]: "🧾 /session-admin — セッション一覧",
 };
 
 const COLORS = {
@@ -56,9 +59,41 @@ const COLORS = {
   [ListScope.BLACKLIST_ENTRIES]: 0xed4245,
   [ListScope.GLOBAL_BL]: 0xed4245,
   [ListScope.GLOBAL_GUILD_BL]: 0xed4245,
+  [ListScope.SESSION_ADMIN]: 0x5865f2,
 };
 
 const FOOTER_RE = /ページ (\d+)\/(\d+)/;
+
+function isBotOwnerUser(userId) {
+  return process.env.BOT_OWNER_ID?.trim() === userId;
+}
+
+function formatSessionDateTime(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "(不明)";
+  return formatDateTime(n);
+}
+
+function formatSessionLine(session) {
+  const sessionId = session.session_id?.trim() || "(未設定)";
+  const guildId = session.guild_id?.trim() || "(不明)";
+  const channelId = session.channel_id?.trim() || "(不明)";
+  const userId = session.user_id?.trim() || "(不明)";
+  const channel = channelId === "(不明)" ? channelId : `<#${channelId}> (\`${channelId}\`)`;
+  const user = userId === "(不明)" ? userId : `<@${userId}> (\`${userId}\`)`;
+  const secretAllowed = Number(session.secret_allowed) === 1 ? "許可" : "拒否";
+  const connection = session.socket_id?.trim() ? "接続中" : "未接続";
+
+  return [
+    `session_id: \`${sessionId}\``,
+    `guild_id: \`${guildId}\``,
+    `channel_id: ${channel}`,
+    `user_id: ${user}`,
+    `secret_allowed: ${secretAllowed}`,
+    `connection: ${connection}`,
+    `created_at: ${formatSessionDateTime(session.created_at)}`,
+  ].join(" / ");
+}
 
 /**
  * @param {import("discord.js").Embed} [embed]
@@ -145,6 +180,10 @@ export async function getLinesForScope(scope, listKey, client = null) {
           return `ID: \`${e.guild_id}\` / サーバー名: ${name ?? "(不明)"}`;
         }),
       );
+    case ListScope.SESSION_ADMIN:
+      return ActiveSessionDB.findAll()
+        .toSorted((a, b) => Number(b.created_at) - Number(a.created_at))
+        .map(formatSessionLine);
     default:
       return [];
   }
@@ -195,10 +234,10 @@ function canUseListScope(interaction, scope) {
       const ownerId = process.env.BOT_OWNER_ID?.trim();
       return !!(ownerId && interaction.user.id === ownerId);
     }
-    case ListScope.GLOBAL_GUILD_BL: {
-      const ownerId = process.env.BOT_OWNER_ID?.trim();
-      return !!(ownerId && interaction.user.id === ownerId);
-    }
+    case ListScope.GLOBAL_GUILD_BL:
+      return isBotOwnerUser(interaction.user.id);
+    case ListScope.SESSION_ADMIN:
+      return isBotOwnerUser(interaction.user.id);
     default:
       return false;
   }
