@@ -111,34 +111,11 @@ Discord の装飾記法がそのまま反映されます。
 
 ## シークレットエフェクト
 
-`/secret` と `/secret-admin` では、OBS オーバーレイに適用するセッションエフェクトを切り替えられます。
+`/secret` は、条件を満たすセッションに対して非公開の追加演出を切り替えるためのコマンドです。
+どのような演出が適用されるか、また指定できる値の詳細は公開ドキュメントでは扱いません。
+通常ユーザーは自分が作成したセッション、または `secret` が許可されたセッションでのみ利用できます。
 
-### 利用者向けコマンド
-
-```text
-/secret effect:gaming value:true
-/secret effect:reverse value:false
-```
-
-`/secret` は現在のチャンネルのセッションに対して、許可されたエフェクトを有効化または無効化します。
-通常ユーザーは自分が作成したセッション、または `secret` が許可されたセッションに適用できます。
-
-### 管理者向けコマンド
-
-```text
-/secret-admin session_id:<セッションID> effect:<エフェクト名> mode:enable
-/secret-admin session_id:<セッションID> effect:<エフェクト名> mode:disable
-```
-
-`/secret-admin` は Bot 管理者が指定した `session_id` のエフェクトを直接切り替えるためのコマンドです。
-
-### `/secret` のエフェクト一覧
-
-| 値 | 効果 |
-|---|---|
-| `gaming` | 文字色を虹色アニメーションにする |
-| `reverse` | 流れる方向を反転する |
-| `loop` | コメントをループ表示する |
+`/secret-admin` は Bot オーナー専用コマンドです。
 
 ### 認証コマンド
 
