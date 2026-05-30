@@ -33,11 +33,35 @@ const HELP_SECTIONS = [
     title: "📖 ヘルプ — 絵文字・記述例",
   },
   {
+    id:        "owner",
+    label:     "BOTオーナー専用",
+    title:     "📖 ヘルプ — BOTオーナー専用",
+    ownerOnly: true,
+  },
+  {
     id:    "authflow",
     label: "認証フロー",
     title: "📖 ヘルプ — 認証フロー",
   },
 ];
+
+function isBotOwner(userId) {
+  return !!process.env.BOT_OWNER_ID?.trim() && process.env.BOT_OWNER_ID.trim() === userId;
+}
+
+function getVisibleHelpSections(userId) {
+  const canViewOwnerSection = isBotOwner(userId);
+  return HELP_SECTIONS.filter((section) => !section.ownerOnly || canViewOwnerSection);
+}
+
+function buildNoPermissionEmbed() {
+  return new EmbedBuilder()
+    .setColor(0xed4245)
+    .setTitle("❌ 権限がありません")
+    .setDescription("このヘルプページはBOTオーナー専用です。")
+    .setFooter({ text: `v${VERSION}` })
+    .setTimestamp();
+}
 
 function buildHelpEmbed(sectionId) {
   const base = new EmbedBuilder()
@@ -111,11 +135,6 @@ function buildHelpEmbed(sectionId) {
             inline: false,
           },
           {
-            name:  "🛡️ `/secret-admin session_id effect mode`",
-            value: "Bot管理者が指定したセッションIDのエフェクトを直接有効化/無効化します。",
-            inline: false,
-          },
-          {
             name:  "📊 `/status`",
             value:
               "CPU・メモリ使用率、稼働時間、バージョン、自分のアクティブセッション状況を表示します（グローバル BL 対象外なら誰でも実行可）。",
@@ -186,6 +205,34 @@ function buildHelpEmbed(sectionId) {
         );
       break;
 
+    case "owner":
+      base
+        .setTitle("📖 Discord OBS Overlay — BOTオーナー専用")
+        .setDescription("BOTオーナーだけが使えるコマンドの一覧です。")
+        .setFields(
+          {
+            name:  "🛡️ `/secret-admin`",
+            value: "BOTオーナー専用コマンドです。詳細は非公開です。",
+            inline: false,
+          },
+          {
+            name:  "🚫 `/global_blacklist`",
+            value: "グローバルユーザーブラックリストを管理します。",
+            inline: false,
+          },
+          {
+            name:  "🏠 `/global_guild_blacklist`",
+            value: "グローバルギルドブラックリストを管理します。",
+            inline: false,
+          },
+          {
+            name:  "🧾 `/session-admin`",
+            value: "全アクティブセッションの管理・確認を行います。",
+            inline: false,
+          },
+        );
+      break;
+
     case "authflow":
     default:
       base
@@ -207,7 +254,8 @@ function buildHelpEmbed(sectionId) {
 }
 
 function buildHelpComponents(userId, sectionIndex) {
-  const total = HELP_SECTIONS.length;
+  const visibleSections = getVisibleHelpSections(userId);
+  const total = visibleSections.length;
   const prevIndex = Math.max(0, sectionIndex - 1);
   const nextIndex = Math.min(total - 1, sectionIndex + 1);
 
@@ -229,7 +277,7 @@ function buildHelpComponents(userId, sectionIndex) {
       .setCustomId(`${HELP_PREFIX}:jump:${userId}`)
       .setPlaceholder("表示したい項目を選択…")
       .addOptions(
-        HELP_SECTIONS.map((s, idx) => ({
+        visibleSections.map((s, idx) => ({
           label: s.label,
           value: s.id,
           description: s.title.replace("📖 Discord OBS Overlay — ", ""),
@@ -259,9 +307,16 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const requested = interaction.options.getString("section", false);
-  const defaultIndex = HELP_SECTIONS.findIndex((s) => s.id === (requested ?? ""));
+  const visibleSections = getVisibleHelpSections(interaction.user.id);
+  const requestedSection = HELP_SECTIONS.find((s) => s.id === requested);
+
+  if (requestedSection?.ownerOnly && !isBotOwner(interaction.user.id)) {
+    return interaction.reply({ embeds: [buildNoPermissionEmbed()], flags: MessageFlags.Ephemeral });
+  }
+
+  const defaultIndex = visibleSections.findIndex((s) => s.id === (requested ?? ""));
   const sectionIndex = defaultIndex >= 0 ? defaultIndex : 0;
-  const section = HELP_SECTIONS[sectionIndex];
+  const section = visibleSections[sectionIndex];
 
   const embed = buildHelpEmbed(section.id);
   const components = buildHelpComponents(interaction.user.id, sectionIndex);
@@ -292,8 +347,10 @@ export async function handleHelpComponent(interaction) {
     }
     const index = Number.parseInt(indexStr, 10);
     if (!Number.isFinite(index)) return;
-    const clamped = Math.min(Math.max(0, index), HELP_SECTIONS.length - 1);
-    const section = HELP_SECTIONS[clamped];
+    const visibleSections = getVisibleHelpSections(ownerId);
+    const clamped = Math.min(Math.max(0, index), visibleSections.length - 1);
+    const section = visibleSections[clamped];
+    if (!section) return;
     const embed = buildHelpEmbed(section.id);
     const components = buildHelpComponents(ownerId, clamped);
 
@@ -313,9 +370,16 @@ export async function handleHelpComponent(interaction) {
       });
     }
     const value = interaction.values[0];
-    const index = HELP_SECTIONS.findIndex((s) => s.id === value);
+    const requestedSection = HELP_SECTIONS.find((s) => s.id === value);
+    if (requestedSection?.ownerOnly && !isBotOwner(ownerId)) {
+      return interaction.reply({ embeds: [buildNoPermissionEmbed()], flags: MessageFlags.Ephemeral });
+    }
+
+    const visibleSections = getVisibleHelpSections(ownerId);
+    const index = visibleSections.findIndex((s) => s.id === value);
     const clamped = index >= 0 ? index : 0;
-    const section = HELP_SECTIONS[clamped];
+    const section = visibleSections[clamped];
+    if (!section) return;
     const embed = buildHelpEmbed(section.id);
     const components = buildHelpComponents(ownerId, clamped);
 
