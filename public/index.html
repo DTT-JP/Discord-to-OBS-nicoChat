@@ -103,17 +103,11 @@
       transform: translateX(-50%);
     }
 
-    /* ── エフェクト: gaming ──────────────────────────
+    /* ── 表示制御 ───────────────────────────────────
      *
-     * インラインスタイル（style="color:#fff"）は
-     * CSSクラスより優先度が高いため !important だけでは勝てない。
-     *
-     * 対策:
-     *   JS 側で gaming が有効な span には color をセットしない。
-     *   CSS 側は animation のみを担当する。
-     *
-     * .effect-gaming .text-part に対して
-     * animation を直接指定することでアニメーションを適用する。
+     * インラインスタイルは CSS クラスより優先度が高いため、
+     * 必要な場合は JS 側で該当スタイルをセットしない。
+     * CSS 側は animation のみを担当する。
      * ─────────────────────────────────────────────── */
     @keyframes gaming-color {
       0%   { color: #ff0000; }
@@ -126,16 +120,11 @@
       100% { color: #ff0000; }
     }
 
-    /*
-     * ★ color: unset / inherit は削除
-     *    インラインの color を JS 側でセットしないことで解決する
-     *    （color の宣言がなければ CSS アニメーションが有効になる）
-     */
     .effect-gaming .text-part {
       animation: gaming-color 1.5s linear infinite !important;
     }
 
-    /* ── エフェクト: _live（半透過） ── */
+    /* ── 表示制御（半透過） ── */
     .effect-live { opacity: 0.45; }
 
     /* ── flow アニメーション ── */
@@ -144,7 +133,7 @@
       to   { transform: translateX(calc(-1 * var(--distance, 200vw))) scale(var(--fit-scale, 1)); }
     }
 
-    /* ── loop アニメーション ── */
+    /* ── 繰り返し用アニメーション ── */
     @keyframes flow-loop {
       from { transform: translateX(0) scale(var(--fit-scale, 1)); }
       to   { transform: translateX(calc(-1 * var(--distance, 200vw))) scale(var(--fit-scale, 1)); }
