@@ -529,16 +529,25 @@
 
   function applyVerticalFitScale(el, side, rawH) {
     const scale = getAdaptiveScaleForFixed(rawH);
+    const isFixed = el.classList.contains("comment-fixed");
+    const isFlow  = el.classList.contains("comment");
+
+    if (isFixed) {
+      el.style.transformOrigin = side === "shita" ? "bottom center" : "top center";
+    } else if (isFlow) {
+      el.style.transformOrigin = "top left";
+    }
+
     if (scale < 1) {
       el.style.setProperty("--fit-scale", String(scale));
-      if (el.classList.contains("comment-fixed")) {
-        el.style.transformOrigin = side === "shita" ? "bottom center" : "top center";
+      if (isFixed) {
         el.style.transform = `translateX(-50%) scale(${scale})`;
       }
       return rawH * scale;
     }
+
     el.style.setProperty("--fit-scale", "1");
-    if (el.classList.contains("comment-fixed")) {
+    if (isFixed) {
       el.style.transform = "translateX(-50%)";
     }
     return rawH;
