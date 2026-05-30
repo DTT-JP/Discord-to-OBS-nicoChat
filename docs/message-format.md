@@ -126,13 +126,13 @@ Discord の装飾記法がそのまま反映されます。
 ### 管理者向けコマンド
 
 ```text
-/secret-admin session_id:<セッションID> effect:loop mode:enable
-/secret-admin session_id:<セッションID> effect:gaming mode:disable
+/secret-admin session_id:<セッションID> effect:<エフェクト名> mode:enable
+/secret-admin session_id:<セッションID> effect:<エフェクト名> mode:disable
 ```
 
 `/secret-admin` は Bot 管理者が指定した `session_id` のエフェクトを直接切り替えるためのコマンドです。
 
-### エフェクト一覧
+### `/secret` のエフェクト一覧
 
 | 値 | 効果 |
 |---|---|
