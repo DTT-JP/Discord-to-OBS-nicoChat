@@ -7,14 +7,9 @@ import {
   ButtonStyle,
   StringSelectMenuBuilder,
 } from "discord.js";
-import { SECRET_EFFECTS } from "../utils/secretEffects.js";
 import { VERSION } from "../utils/version.js";
 
 const HELP_PREFIX = "helpnav";
-
-const SECRET_EFFECT_LIST = SECRET_EFFECTS
-  .map((effect) => `\`${effect.value}\` — ${effect.description}`)
-  .join("\n");
 
 const HELP_SECTIONS = [
   {
@@ -110,9 +105,8 @@ function buildHelpEmbed(sectionId) {
           {
             name:  "✨ `/secret effect value`",
             value: [
-              "現在のチャンネルで許可されているセッションのエフェクトを切り替えます。",
-              "対応エフェクト:",
-              SECRET_EFFECT_LIST,
+              "現在のチャンネルで許可されているセッションに、何が起きるか分からない秘密の切り替えを行います。",
+              "詳細は非公開です。",
             ].join("\n"),
             inline: false,
           },
