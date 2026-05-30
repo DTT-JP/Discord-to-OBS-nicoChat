@@ -150,6 +150,7 @@ export async function execute(interaction) {
     token_hash:        pending.token_hash,
     socket_id:         pending.socket_id,
     user_id:           userId,
+    guild_id:          interaction.guild.id,
     channel_id:        pending.channel_id,
     aes_key:           aesKey,
     created_at:        Date.now(),
