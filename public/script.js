@@ -438,11 +438,9 @@
           // メンション表示テキスト（後で実際のユーザー名に置き換えても良い）
           span.textContent = part.content;
 
-          // ロール色がある場合はその色で、なければデフォルト色
-          const mentionTextColor  = part.roleColor || textColor;
-          const mentionOutline    = part.roleColor
-            ? calcOutlineColor(part.roleColor)
-            : outlineColor;
+          // ロール色がある場合は縁取りにだけ使い、文字色は通常コメントの指定色を維持する
+          const mentionTextColor  = textColor;
+          const mentionOutline    = part.roleColor || outlineColor;
           const mentionShadow     = buildTextShadow(mentionOutline);
 
           if (!hasGaming) {
