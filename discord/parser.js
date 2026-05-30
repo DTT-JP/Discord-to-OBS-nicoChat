@@ -111,7 +111,11 @@ function parseMetaBlock(raw) {
     return "";
   });
 
-  return { color, size, position, font, sessionFx, msgCommands, cleaned: cleaned.trim() };
+  // ── 修正: 文末の半角スペース・タブのみ除去（全角スペース・特殊空白は保持） ──
+  // 旧: cleaned.trim() → 文頭・文末の全空白を除去していた
+  // 新: 末尾の半角スペース・タブのみ除去。CA用の特殊空白(U+2004等)や
+  //     全角スペースは「幅を持つ文字」として保持する。
+  return { color, size, position, font, sessionFx, msgCommands, cleaned: cleaned.replace(/[ \t]+$/, "") };
 }
 
 // ─────────────────────────────────────────────
