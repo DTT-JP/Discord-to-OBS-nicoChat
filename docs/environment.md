@@ -31,7 +31,7 @@
 
 | 変数 | 用途 |
 |---|---|
-| `BOT_OWNER_ID` | 製作者専用コマンドの判定に使用 |
+| `BOT_OWNER_ID` | 製作者専用コマンドの判定に使用（複数指定はカンマ区切りまたは空白区切り） |
 | `GLOBAL_BLACKLIST_APPEAL_URL` | `/my-status` 表示用URL |
 | `GLOBAL_GUILD_BLACKLIST_APPEAL_URL` | グローバルギルドBL通知の表示用URL |
 | `MAX_COMMENTS` | 同時表示コメント上限の既定値 |

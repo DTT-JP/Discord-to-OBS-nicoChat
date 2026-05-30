@@ -2,11 +2,14 @@ import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { ActiveSessionDB } from "../database.js";
 import { isKnownSecretEffect, normalizeSecretEffect } from "../utils/secretEffects.js";
 import { applySecretToSockets } from "../utils/secretTransport.js";
+import { isBotOwnerInteraction } from "../utils/botOwner.js";
 
 const MODE_ENABLE = "enable";
 const MODE_DISABLE = "disable";
 
 export const data = new SlashCommandBuilder()
+  .setDefaultMemberPermissions(0)
+  .setDMPermission(false)
   .setName("secret-admin")
   .setDescription("Bot管理者専用コマンド")
   .addStringOption((opt) =>
@@ -33,8 +36,7 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction) {
-  const botOwnerId = process.env.BOT_OWNER_ID?.trim();
-  if (!botOwnerId || interaction.user.id !== botOwnerId) {
+  if (!isBotOwnerInteraction(interaction)) {
     return interaction.reply({
       content: "❌ このコマンドはBot管理者のみ実行できます。",
       flags: MessageFlags.Ephemeral,

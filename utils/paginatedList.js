@@ -16,6 +16,7 @@ import {
   ActiveSessionDB,
 } from "../database.js";
 import { isAdminOrOwner, formatDateTime, formatRemaining, truncateReason } from "./moderation.js";
+import { isBotOwnerUserId } from "./botOwner.js";
 
 export const PAGE_SIZE = 10;
 const PREFIX = "listpg";
@@ -65,7 +66,7 @@ const COLORS = {
 const FOOTER_RE = /ページ (\d+)\/(\d+)/;
 
 function isBotOwnerUser(userId) {
-  return process.env.BOT_OWNER_ID?.trim() === userId;
+  return isBotOwnerUserId(userId);
 }
 
 function formatSessionDateTime(value) {
@@ -230,10 +231,8 @@ function canUseListScope(interaction, scope) {
       if (!interaction.guild || !interaction.member) return false;
       if (admin) return true;
       return BlacklistCtrlPrincipalDB.isAllowed(interaction.member);
-    case ListScope.GLOBAL_BL: {
-      const ownerId = process.env.BOT_OWNER_ID?.trim();
-      return !!(ownerId && interaction.user.id === ownerId);
-    }
+    case ListScope.GLOBAL_BL:
+      return isBotOwnerUser(interaction.user.id);
     case ListScope.GLOBAL_GUILD_BL:
       return isBotOwnerUser(interaction.user.id);
     case ListScope.SESSION_ADMIN:

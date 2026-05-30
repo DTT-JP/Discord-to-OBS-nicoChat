@@ -7,11 +7,7 @@ import { GlobalGuildBlacklistDB } from "../database.js";
 import { parseDurationValueAndUnit } from "../utils/blacklistDuration.js";
 import { formatDateTime, formatRemaining } from "../utils/moderation.js";
 import { ListScope, replyPaginatedList } from "../utils/paginatedList.js";
-
-function isBotOwner(interaction) {
-  const ownerId = process.env.BOT_OWNER_ID?.trim();
-  return ownerId && interaction.user.id === ownerId;
-}
+import { hasBotOwnerConfigured, isBotOwnerInteraction } from "../utils/botOwner.js";
 
 function parseGuildId(interaction) {
   const guildId = interaction.options.getString("guild_id", true).trim();
@@ -43,6 +39,7 @@ function buildGuildDm(guildName, entry) {
 
 export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(0)
+  .setDMPermission(false)
   .setName("global_guild_blacklist")
   .setDescription("グローバルギルドブラックリストを管理します（Bot管理者のみ）")
   .addSubcommand((sub) =>
@@ -97,15 +94,15 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction) {
-  if (!process.env.BOT_OWNER_ID?.trim()) {
+  if (!hasBotOwnerConfigured()) {
     return interaction.reply({
-      content: "❌ `BOT_OWNER_ID` が `.env` に設定されていません。",
+      content: `❌ \`BOT_OWNER_ID\` が \`.env\` に設定されていません。`,
       flags: MessageFlags.Ephemeral,
     });
   }
-  if (!isBotOwner(interaction)) {
+  if (!isBotOwnerInteraction(interaction)) {
     return interaction.reply({
-      content: "❌ このコマンドはBot製作者のみ実行できます。",
+      content: "❌ このコマンドはBot管理者のみ実行できます。",
       flags: MessageFlags.Ephemeral,
     });
   }

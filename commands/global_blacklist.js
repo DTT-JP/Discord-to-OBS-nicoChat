@@ -12,14 +12,11 @@ import {
 } from "../utils/moderation.js";
 import { parseDurationValueAndUnit } from "../utils/blacklistDuration.js";
 import { ListScope, replyPaginatedList } from "../utils/paginatedList.js";
-
-function isBotOwner(interaction) {
-  const ownerId = process.env.BOT_OWNER_ID?.trim();
-  return ownerId && interaction.user.id === ownerId;
-}
+import { hasBotOwnerConfigured, isBotOwnerInteraction } from "../utils/botOwner.js";
 
 export const data = new SlashCommandBuilder()
   .setDefaultMemberPermissions(0)
+  .setDMPermission(false)
   .setName("global_blacklist")
   .setDescription("グローバルブラックリストを管理します")
   .addSubcommand((sub) =>
@@ -86,11 +83,14 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   const sub = interaction.options.getSubcommand();
 
-  if (!process.env.BOT_OWNER_ID?.trim()) {
-    return interaction.reply({ content: "❌ `BOT_OWNER_ID` が `.env` に設定されていません。", flags: MessageFlags.Ephemeral });
+  if (!hasBotOwnerConfigured()) {
+    return interaction.reply({
+      content: `❌ \`BOT_OWNER_ID\` が \`.env\` に設定されていません。`,
+      flags: MessageFlags.Ephemeral,
+    });
   }
-  if (!isBotOwner(interaction)) {
-    return interaction.reply({ content: "❌ このコマンドはBot製作者のみ実行できます。", flags: MessageFlags.Ephemeral });
+  if (!isBotOwnerInteraction(interaction)) {
+    return interaction.reply({ content: "❌ このコマンドはBot管理者のみ実行できます。", flags: MessageFlags.Ephemeral });
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
