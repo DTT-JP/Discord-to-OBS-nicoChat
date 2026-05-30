@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
 import { GlobalBlacklistDB, ActiveSessionDB } from "../database.js";
-import { KNOWN_SECRET_EFFECTS, SECRET_EFFECT_CHOICES } from "../utils/secretEffects.js";
+import { SECRET_EFFECT_CHOICES, validateSecretEffect } from "../utils/secretEffects.js";
 import { applySecretToSockets } from "../utils/secretTransport.js";
 
 export const data = new SlashCommandBuilder()
@@ -30,7 +30,7 @@ export async function execute(interaction) {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const effectRaw = interaction.options.getString("effect", true).trim().toLowerCase();
+  const effectRaw = interaction.options.getString("effect", true);
   const value     = interaction.options.getBoolean("value", true);
   const channel   = interaction.channelId;
 
@@ -50,18 +50,18 @@ export async function execute(interaction) {
     });
   }
 
-  // 既知エフェクト名のみOBSへ送信する。
-  // 未知の名前の場合でも成功扱いのまま（意図した動作）とするが、
-  // クライアントへの送信は行わない。
-  if (KNOWN_SECRET_EFFECTS.has(effectRaw)) {
-    applySecretToSockets(
-      targetSessions.map((s) => s.socket_id).filter(Boolean),
-      effectRaw,  // KNOWN_SECRET_EFFECTS で検証済みの名前のみ使用
-      value,
-    );
+  const effectValidation = validateSecretEffect(effectRaw);
+  if (!effectValidation.ok) {
+    return interaction.editReply({
+      content: effectValidation.message,
+    });
   }
-  // KNOWN_SECRET_EFFECTS に含まれない名前は applySecretToSockets を呼ばず、
-  // 送信なしで成功扱いのままフォールスルーする（意図した動作）
+
+  applySecretToSockets(
+    targetSessions.map((s) => s.socket_id).filter(Boolean),
+    effectValidation.effect,
+    value,
+  );
 
   return interaction.editReply({
     content: value
