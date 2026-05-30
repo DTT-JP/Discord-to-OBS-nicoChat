@@ -13,16 +13,8 @@ const RE_HEADING = /^(-#|#{1,3})\s*/;
 /** メンション: while ループで使うため g フラグ必須 */
 const RE_MENTION = /<@!?(\d+)>/g;
 
-// 許可する添付画像の拡張子
+// 許可する添付画像の拡張子 / Discord 画像プロキシの format クエリ
 const ALLOWED_IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "bmp", "webp"]);
-
-// 許可する添付画像のホスト（Discord CDN）
-const ALLOWED_IMAGE_HOSTS = new Set([
-  "cdn.discordapp.com",
-  "media.discordapp.net",
-  "images-ext-1.discordapp.net",
-  "images-ext-2.discordapp.net",
-]);
 
 // ─────────────────────────────────────────────
 // マップ
@@ -66,19 +58,13 @@ const VALID_FONTS = new Set(["gothic", "mincho"]);
 function isAllowedImageUrl(urlStr) {
   try {
     const url = new URL(urlStr);
-    // HTTPSのみ許可
+    // HTTPSのみ許可。サーバー側では取得せず、OBSブラウザの <img> に渡すだけ。
     if (url.protocol !== "https:") return false;
-    // 許可ホストのみ
-    if (!ALLOWED_IMAGE_HOSTS.has(url.hostname)) return false;
-    // 拡張子チェック（pathname のみ使用し、クエリパラメータを除外する）
-    // pathname 例: /attachments/123/456/image.png
-    const pathname = url.pathname.toLowerCase();
-    // pathname の末尾セグメントから拡張子を取得
-    const lastSegment = pathname.split("/").pop() || "";
-    const dotIndex = lastSegment.lastIndexOf(".");
-    if (dotIndex === -1) return false;
-    const ext = lastSegment.slice(dotIndex + 1);
+
+    // 拡張子または Discord 画像プロキシの format クエリで画像と判断できるものだけ許可する。
+    const ext = getExtFromUrl(urlStr);
     if (!ext || !ALLOWED_IMAGE_EXTS.has(ext)) return false;
+
     return true;
   } catch {
     return false;
@@ -96,11 +82,23 @@ function getExtFromUrl(urlStr) {
     const pathname = url.pathname.toLowerCase();
     const lastSegment = pathname.split("/").pop() || "";
     const dotIndex = lastSegment.lastIndexOf(".");
-    if (dotIndex === -1) return "";
-    return lastSegment.slice(dotIndex + 1);
+    if (dotIndex !== -1) {
+      const ext = lastSegment.slice(dotIndex + 1);
+      if (ALLOWED_IMAGE_EXTS.has(ext)) return ext;
+    }
+
+    // Discord の画像プロキシや一部サービスはパスに拡張子がなく、format=webp 等で画像形式を示す。
+    const format = (url.searchParams.get("format") || "").toLowerCase();
+    if (ALLOWED_IMAGE_EXTS.has(format)) return format;
+
+    return "";
   } catch {
     return "";
   }
+}
+
+function trimUrlTrailingPunctuation(urlStr) {
+  return urlStr.replace(/[.,!?、。)）\]］}>]+$/u, "");
 }
 
 // ─────────────────────────────────────────────
@@ -182,45 +180,46 @@ function extractInlineStyles(text) {
 // ─────────────────────────────────────────────
 
 /**
- * テキスト中の Discord CDN 画像URLを検出して attachment パーツに変換する。
- * クエリパラメータ（?ex=...&format=webp 等）は拡張子判定に使用しない。
+ * テキスト中の HTTPS 画像URLを検出して attachment パーツに変換する。
+ * 拡張子または format クエリから画像形式を判定する。
  * URLそのものはそのまま img.src に渡すため、クエリ付きでも正しく読み込まれる。
  * @param {string} seg - テキストセグメント
  * @returns {Array} text / attachment パーツの配列
  */
 function splitTextWithImageUrls(seg) {
-  // Discord CDN ホストの https:// URL を検出する正規表現
-  // URL 末尾の判定: 空白・改行・< で終わり、またはテキスト末尾
-  const RE_DISCORD_URL = /https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net|images-ext-1\.discordapp\.net|images-ext-2\.discordapp\.net)\/\S+/g;
+  // HTTPS URL を検出する。画像判定は isAllowedImageUrl() に集約する。
+  const RE_HTTPS_URL = /https:\/\/[^\s<>"']+/g;
 
   const result = [];
   let last = 0;
   let m;
 
-  RE_DISCORD_URL.lastIndex = 0;
-  while ((m = RE_DISCORD_URL.exec(seg)) !== null) {
+  RE_HTTPS_URL.lastIndex = 0;
+  while ((m = RE_HTTPS_URL.exec(seg)) !== null) {
     // URL より前のテキストを追加
     if (m.index > last) {
       const before = seg.slice(last, m.index);
       if (before) result.push({ type: "text", content: before });
     }
 
-    const rawUrl = m[0];
-    // pathname から拡張子を取得（クエリパラメータを除外）
+    const matchedUrl = m[0];
+    const rawUrl = trimUrlTrailingPunctuation(matchedUrl);
+    const trailingText = matchedUrl.slice(rawUrl.length);
     const ext = getExtFromUrl(rawUrl);
-    if (ALLOWED_IMAGE_EXTS.has(ext)) {
-      // 許可された画像拡張子 → attachment パーツとして追加
+    if (isAllowedImageUrl(rawUrl)) {
+      // 許可された画像URL → attachment パーツとして追加
       const isGif = ext === "gif";
-      result.push({ type: "attachment", content: rawUrl, isGif, width: null, height: null });
+      result.push({ type: "attachment", content: rawUrl, originalUrl: rawUrl, isGif, width: null, height: null });
+      if (trailingText) result.push({ type: "text", content: trailingText });
     } else {
-      // 拡張子が画像でない（または不明）→ テキストとしてそのまま残す
-      result.push({ type: "text", content: rawUrl });
+      // 画像でない（または不明）→ テキストとしてそのまま残す
+      result.push({ type: "text", content: matchedUrl });
     }
 
-    last = RE_DISCORD_URL.lastIndex;
+    last = RE_HTTPS_URL.lastIndex;
   }
 
-  RE_DISCORD_URL.lastIndex = 0;
+  RE_HTTPS_URL.lastIndex = 0;
 
   // URL より後のテキストを追加
   if (last < seg.length) {
@@ -232,7 +231,7 @@ function splitTextWithImageUrls(seg) {
 }
 
 /**
- * テキストをテキスト・絵文字・メンション・Discord CDN画像URLに分割する
+ * テキストをテキスト・絵文字・メンション・画像URLに分割する
  * @param {string} text
  * @param {Map<string, string|null>} mentionColorMap - userId -> roleColor (hex or null)
  * @returns {Array}
@@ -283,7 +282,7 @@ function parseTextSegments(text, mentionColorMap = new Map()) {
     if (seg) rawParts.push({ type: "text", content: seg });
   }
 
-  // text パーツをさらに Discord CDN 画像URLで分割する
+  // text パーツをさらに画像URLで分割する
   const parts = [];
   for (const part of rawParts) {
     if (part.type === "text") {
@@ -299,6 +298,23 @@ function parseTextSegments(text, mentionColorMap = new Map()) {
 // ─────────────────────────────────────────────
 // スタンプ
 // ─────────────────────────────────────────────
+
+
+function getAttachmentDedupeKeys(part) {
+  if (part.type !== "attachment") return [];
+  return [part.content, part.originalUrl].filter(Boolean);
+}
+
+function pushUniqueAttachmentParts(parts, newParts) {
+  const seen = new Set(parts.flatMap(getAttachmentDedupeKeys));
+
+  for (const part of newParts) {
+    const keys = getAttachmentDedupeKeys(part);
+    if (keys.length > 0 && keys.some((key) => seen.has(key))) continue;
+    parts.push(part);
+    for (const key of keys) seen.add(key);
+  }
+}
 
 function parseStickerParts(stickers) {
   const parts = [];
@@ -335,16 +351,17 @@ function parseStickerParts(stickers) {
 function parseAttachmentParts(attachments) {
   const parts = [];
   for (const attachment of attachments.values()) {
-    const url = attachment.url;
-    if (!isAllowedImageUrl(url)) continue;
+    const url = [attachment.url, attachment.proxyURL].find((candidate) => candidate && isAllowedImageUrl(candidate));
+    if (!url) continue;
 
-    // クエリパラメータを除外した pathname から拡張子を取得
+    // クエリパラメータを除外した pathname または format クエリから拡張子を取得
     const ext = getExtFromUrl(url);
     const isGif = ext === "gif";
 
     parts.push({
       type:    "attachment",
       content: url,
+      originalUrl: url,
       isGif,
       width:   attachment.width  ?? null,
       height:  attachment.height ?? null,
@@ -366,18 +383,27 @@ function parseAttachmentParts(attachments) {
  */
 function parseEmbedImageParts(embeds) {
   const parts = [];
+  const seen = new Set();
+
   for (const embed of embeds) {
-    // embed.image: { url, proxyURL, width, height }
-    const imgUrl = embed.image?.url ?? embed.image?.proxyURL ?? null;
-    if (imgUrl && isAllowedImageUrl(imgUrl)) {
+    // embed.image / embed.thumbnail: { url, proxyURL, width, height }
+    for (const source of [embed.image, embed.thumbnail]) {
+      if (!source) continue;
+
+      // 外部画像は Discord のプロキシURLがある場合、そちらを優先する。
+      const imgUrl = [source.proxyURL, source.url].find((candidate) => candidate && isAllowedImageUrl(candidate));
+      if (!imgUrl || seen.has(imgUrl)) continue;
+      seen.add(imgUrl);
+
       const ext = getExtFromUrl(imgUrl);
       const isGif = ext === "gif";
       parts.push({
         type:    "attachment",
         content: imgUrl,
+        originalUrl: source.url ?? imgUrl,
         isGif,
-        width:   embed.image?.width  ?? null,
-        height:  embed.image?.height ?? null,
+        width:   source.width  ?? null,
+        height:  source.height ?? null,
       });
     }
   }
@@ -542,13 +568,13 @@ export function parseMessage(message, watchChannelIds, options = {}) {
   // ⑤ 添付画像を末尾に追加
   if (message.attachments.size > 0) {
     const attachParts = parseAttachmentParts(message.attachments);
-    parts.push(...attachParts);
+    pushUniqueAttachmentParts(parts, attachParts);
   }
 
   // ⑥ テキストメッセージに embed 画像が付いている場合（例: テキスト + URL貼り付け）
   if (message.embeds.length > 0) {
     const embedParts = parseEmbedImageParts(message.embeds);
-    parts.push(...embedParts);
+    pushUniqueAttachmentParts(parts, embedParts);
   }
 
   if (parts.length === 0) return null;

@@ -162,31 +162,39 @@
     // 相対輝度（sRGB輝度近似）
     const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     // 明るい色（luminance > 0.5）→ 黒縁、暗い色 → 白縁
-    return luminance > 0.5 ? "rgba(0,0,0,0.92)" : "rgba(255,255,255,0.90)";
+    return luminance > 0.5 ? "rgba(0,0,0,1)" : "rgba(255,255,255,0.95)";
   }
 
   /**
    * テキストシャドウスタイル文字列を生成する。
-   * 4方向縁取り + 強いドロップシャドウで映像背景への視認性を確保する。
+   * 太めの縁取り + 強いドロップシャドウで映像背景への視認性を確保する。
    * @param {string} outlineColor
    * @returns {string}
    */
   function buildTextShadow(outlineColor) {
     return [
-      // 4方向の縁取り（1px）
+      // 標準で太めの縁取り。白文字でも白背景から分離できるよう黒縁を強く出す。
       `-1px -1px 0 ${outlineColor}`,
+       `0   -1px 0 ${outlineColor}`,
        `1px -1px 0 ${outlineColor}`,
+      `-1px  0   0 ${outlineColor}`,
+       `1px  0   0 ${outlineColor}`,
       `-1px  1px 0 ${outlineColor}`,
+       `0    1px 0 ${outlineColor}`,
        `1px  1px 0 ${outlineColor}`,
-      // 斜め方向も追加して縁取りを強化
       `-2px -2px 0 ${outlineColor}`,
+       `0   -2px 0 ${outlineColor}`,
        `2px -2px 0 ${outlineColor}`,
+      `-2px  0   0 ${outlineColor}`,
+       `2px  0   0 ${outlineColor}`,
       `-2px  2px 0 ${outlineColor}`,
+       `0    2px 0 ${outlineColor}`,
        `2px  2px 0 ${outlineColor}`,
-      // 強いドロップシャドウ（どんな背景でも浮き上がる）
-       `0 2px 4px rgba(0,0,0,0.95)`,
-       `0 4px 8px rgba(0,0,0,0.85)`,
-       `0 0 12px rgba(0,0,0,0.7)`,
+      // 強いドロップシャドウ（白背景・明るいゲーム画面でも浮き上がる）
+       `0 2px 2px rgba(0,0,0,1)`,
+       `0 4px 6px rgba(0,0,0,0.95)`,
+       `0 0 10px rgba(0,0,0,0.9)`,
+       `0 0 18px rgba(0,0,0,0.65)`,
     ].join(", ");
   }
 
@@ -352,9 +360,10 @@
    */
   async function buildParts(payload, forFixed = false) {
     const sizeKey = (payload.size && SIZE_CONFIG[payload.size]) ? payload.size : "medium";
-    const sizePx    = vhToPx(SIZE_CONFIG[sizeKey].vh);
-    const emojiPx   = sizePx;
-    const stickerPx = sizePx;
+    const sizePx       = vhToPx(SIZE_CONFIG[sizeKey].vh);
+    const emojiPx      = sizePx;
+    const stickerPx    = sizePx * 2;
+    const attachmentPx = sizePx * 2;
 
     const hasGaming = sessionEffects.has("gaming") || (payload.sessionFx?.includes("gaming") ?? false);
     const isItalic  = payload.styles?.italic ?? false;
@@ -499,7 +508,7 @@
             img.style.transform     = "none";
 
             if (part.stickerFormat === "gif" && part.stickerId) {
-              img.src = `https://media.discordapp.net/stickers/${part.stickerId}.png?size=160`;
+              img.src = `https://media.discordapp.net/stickers/${part.stickerId}.png?size=320`;
             } else {
               img.src = part.content;
             }
@@ -511,8 +520,8 @@
           if (part.isGif) {
             // GIFはCanvasで静止化
             try {
-              const canvas = await createStaticGifCanvas(part.content, stickerPx * 4);
-              canvas.style.height        = `${stickerPx * 2}px`;
+              const canvas = await createStaticGifCanvas(part.content, attachmentPx * 2);
+              canvas.style.height        = `${attachmentPx}px`;
               canvas.style.width         = "auto";
               canvas.style.verticalAlign = "middle";
               canvas.style.display       = "inline-block";
@@ -524,7 +533,7 @@
               img.src               = part.content;
               img.alt               = "";
               img.loading           = "lazy";
-              img.style.height      = `${stickerPx * 2}px`;
+              img.style.height      = `${attachmentPx}px`;
               img.style.width       = "auto";
               img.style.verticalAlign = "middle";
               img.style.display     = "inline-block";
@@ -536,8 +545,8 @@
             img.className           = "attachment-img";
             img.alt                 = "";
             img.loading             = "lazy";
-            img.crossOrigin         = "anonymous";
-            img.style.height        = `${stickerPx * 2}px`;
+            img.onerror             = () => console.warn("[overlay] 画像読み込み失敗:", part.content);
+            img.style.height        = `${attachmentPx}px`;
             img.style.width         = "auto";
             img.style.verticalAlign = "middle";
             img.style.display       = "inline-block";
