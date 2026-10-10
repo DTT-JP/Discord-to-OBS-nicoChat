@@ -58,7 +58,6 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,   // メッセージ本文の取得に必要
-    GatewayIntentBits.GuildMembers,     // displayName・ロール取得に必要
     GatewayIntentBits.DirectMessages,   // DM送信に必要
   ],
   partials: [

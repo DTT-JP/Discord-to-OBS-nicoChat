@@ -107,7 +107,7 @@ cp .env.example .env
 1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリを作成
 2. Application ID を `CLIENT_ID` に設定
 3. Botトークンを `DISCORD_TOKEN` に設定
-4. `SERVER MEMBERS INTENT` / `MESSAGE CONTENT INTENT` を有効化
+4. `MESSAGE CONTENT INTENT` を有効化（`SERVER MEMBERS INTENT` は不要です）
 5. OAuth2 で `bot` と `applications.commands` を付与して招待
 
 ### 5) スラッシュコマンド登録
